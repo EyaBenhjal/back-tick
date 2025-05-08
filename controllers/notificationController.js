@@ -3,7 +3,6 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 const { validateObjectId } = require('../utils/validation');
 const { sendNotification } = require('../websocket');
-
 module.exports.createTicketNotification = async (ticket, actionUser, message) => {
   try {
     let clientNotification, agentNotification;
