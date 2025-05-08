@@ -8,7 +8,6 @@ module.exports.createTicketNotification = async (ticket, actionUser, message) =>
   try {
     let clientNotification, agentNotification;
 
-    // Notification pour le client
     clientNotification = await Notification.create({
       userId: ticket.requester,
       ticketId: ticket._id,
