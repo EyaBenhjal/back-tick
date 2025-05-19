@@ -6,6 +6,8 @@ const nodemailer = require("nodemailer");
 const User = require("../models/User");
 const { createTicketNotification } = require('./notificationController');
 const { sendNotification } = require('../websocket');
+const path = require('path');
+const fs = require('fs');
 
 const { validateObjectId } = require("../utils/validation");
 exports.createTicket = async (req, res) => {
@@ -114,6 +116,65 @@ exports.createTicket = async (req, res) => {
     });
   }
 };
+
+exports.downloadFile = async (req, res) => {
+  try {
+    const { ticketId, fileId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(ticketId)) {
+      return res.status(400).json({ success: false, error: "ID de ticket invalide" });
+    }
+
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    const file = ticket.files.id(fileId);
+    if (!file) {
+      return res.status(404).json({ success: false, error: "Fichier non trouvé" });
+    }
+
+    const filePath = path.join(__dirname, '..', 'uploads', file.path.replace(/^\/+/, ''));
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "Fichier introuvable sur le serveur" });
+    }
+
+    res.download(filePath, file.originalName);
+  } catch (error) {
+    console.error("Erreur téléchargement fichier:", error);
+    res.status(500).json({ success: false, error: "Erreur lors du téléchargement du fichier" });
+  }
+};
+
+exports.viewFile = async (req, res) => {
+  try {
+    const { ticketId, fileId } = req.params;
+
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    const file = ticket.files.id(fileId);
+    if (!file) {
+      return res.status(404).json({ success: false, error: "Fichier non trouvé" });
+    }
+
+    const filePath = path.join(__dirname, '..', 'uploads', file.path.replace(/^\/+/, ''));
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "Fichier introuvable sur le serveur" });
+    }
+
+    res.setHeader('Content-Type', file.fileType);
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("Erreur affichage fichier:", error);
+    res.status(500).json({ success: false, error: "Erreur lors de l'affichage du fichier" });
+  }
+};
+
+
 
 
     // Add this to your ticketControllers.js
@@ -261,7 +322,57 @@ exports.updateTicket = async (req, res) => {
       { new: true, runValidators: true }
     )
     .populate('department requester assignedAgent');
+if (req.body.status === 'resolved' && existingTicket.status !== 'resolved') {
+      try {
+        // Récupérer les détails du client
+        const clientEmail = updatedTicket.clientDetails?.email || updatedTicket.requester?.email;
+        const clientName = updatedTicket.clientDetails?.name || updatedTicket.requester?.name;
 
+        if (clientEmail) {
+          const transporter = nodemailer.createTransport({
+            service: "gmail",
+            auth: {
+              user: process.env.EMAIL_USER,
+              pass: process.env.EMAIL_PASS
+            }
+          });
+
+const mailOptions = {
+  from: process.env.EMAIL_USER,
+  to: clientEmail,
+  subject: `Votre ticket #${updatedTicket._id} a été résolu`,
+  html: `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
+      <h2 style="color: #333;">Bonjour ${clientName},</h2>
+      <p>Nous vous informons que votre ticket a été marqué comme résolu :</p>
+      <ul style="list-style-type: none; padding: 0;">
+        <li><strong>Ticket ID:</strong> ${updatedTicket._id}</li>
+        <li><strong>Titre:</strong> ${updatedTicket.title}</li>
+        <li><strong>Statut:</strong> Résolu</li>
+        ${updatedTicket.resolutionNotes ? `<li><strong>Notes de résolution:</strong> ${updatedTicket.resolutionNotes}</li>` : ''}
+      </ul>
+      <p>Si vous avez d'autres questions, n'hésitez pas à nous contacter.</p>
+      <p style="margin-top: 30px;">Cordialement,<br>L'équipe de support</p>
+    </div>
+  `,
+  attachments: [
+    {
+      filename: 'logo.png',
+      path: path.join(__dirname, '../public/uploads/logo.png'), // Chemin absolu correct
+      cid: 'logo' // Correspond au cid utilisé dans <img src="cid:logo" />
+    }
+  ]
+};
+
+          await transporter.sendMail(mailOptions);
+          console.log(`Email de notification envoyé au client: ${clientEmail}`);
+        }
+      } catch (emailError) {
+        console.error("Erreur lors de l'envoi de l'email au client:", emailError);
+        // Ne pas bloquer la réponse même si l'email échoue
+      }
+    }
     // Then handle notifications if status changed
     if (req.body.status && req.body.status !== existingTicket.status) {
       try {
@@ -330,7 +441,6 @@ exports.assignAgent = async (req, res) => {
       return res.status(400).json({ success: false, error: "ID invalide." });
     }
 
-    // Trouver le ticket et l'agent
     const ticket = await Ticket.findByIdAndUpdate(
       ticketId,
       { assignedAgent: agentId, status: "in_progress" },
@@ -343,7 +453,7 @@ exports.assignAgent = async (req, res) => {
       return res.status(404).json({ success: false, error: "Ticket non trouvé." });
     }
 
-    // Envoyer un email à l'agent
+    // Envoyer un email à l'agent avec logo
     if (ticket.assignedAgent && ticket.assignedAgent.email) {
       const transporter = nodemailer.createTransport({
         service: "gmail",
@@ -358,16 +468,26 @@ exports.assignAgent = async (req, res) => {
         to: ticket.assignedAgent.email,
         subject: "Nouveau ticket assigné",
         html: `
-          <h2>Bonjour ${ticket.assignedAgent.name},</h2>
-          <p>Un nouveau ticket vous a été assigné :</p>
-          <ul>
-            <li><strong>Ticket ID:</strong> ${ticket._id}</li>
-            <li><strong>Titre:</strong> ${ticket.title}</li>
-            <li><strong>Demandeur:</strong> ${ticket.requester.name}</li>
-            <li><strong>Priorité:</strong> ${ticket.priority}</li>
-          </ul>
-          <p>Merci de traiter ce ticket dans les meilleurs délais.</p>
-        `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
+            <h2>Bonjour ${ticket.assignedAgent.name},</h2>
+            <p>Un nouveau ticket vous a été assigné :</p>
+            <ul style="list-style-type: none; padding: 0;">
+              <li><strong>Ticket ID:</strong> ${ticket._id}</li>
+              <li><strong>Titre:</strong> ${ticket.title}</li>
+              <li><strong>Demandeur:</strong> ${ticket.requester.name}</li>
+              <li><strong>Priorité:</strong> ${ticket.priority}</li>
+            </ul>
+            <p>Merci de traiter ce ticket dans les meilleurs délais.</p>
+          </div>
+        `,
+        attachments: [
+          {
+            filename: 'logo.png',
+            path: path.join(__dirname, '../public/uploads/logo.png'),
+            cid: 'logo'
+          }
+        ]
       };
 
       await transporter.sendMail(mailOptions);
@@ -380,6 +500,176 @@ exports.assignAgent = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
+exports.addComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    const userId = req.user._id;
+
+    const ticket = await Ticket.findById(req.params.ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    if (ticket.requester.toString() !== userId.toString() && 
+        req.user.role !== "Admin" && 
+        req.user.role !== "Agent") {
+      return res.status(403).json({ success: false, error: "Non autorisé" });
+    }
+
+    const newComment = {
+      text,
+      author: userId
+    };
+
+    ticket.comments.push(newComment);
+    await ticket.save();
+    
+    // Récupérer le ticket avec les commentaires peuplés
+    const populatedTicket = await Ticket.findById(ticket._id)
+      .populate('comments.author', 'name role')
+      .populate('requester', 'name');
+    
+    // Renvoyer le dernier commentaire peuplé
+    const lastComment = populatedTicket.comments[populatedTicket.comments.length - 1];
+    
+    res.status(200).json({ 
+      success: true, 
+      data: lastComment 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+// Mettre à jour un commentaire
+exports.updateComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    const ticket = await Ticket.findById(req.params.ticketId)
+      .populate('comments.author', 'name role')
+      .populate('assignedAgent', 'name')
+      .populate('requester', 'name');
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    const comment = ticket.comments.id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, error: "Commentaire non trouvé" });
+    }
+
+    // Autorisations:
+    const isAuthor = comment.author._id.toString() === userId.toString();
+    const isAdmin = userRole === "Admin";
+    const isAssignedAgent = ticket.assignedAgent?._id.toString() === userId.toString();
+    const isRequester = ticket.requester?._id.toString() === userId.toString();
+
+    // Règles de permission:
+    // - Admin peut tout modifier
+    // - Agent peut modifier ses propres commentaires
+    // - Client peut modifier ses propres commentaires
+    if (!isAdmin && !(isAssignedAgent && isAuthor) && !(isRequester && isAuthor)) {
+      return res.status(403).json({ 
+        success: false, 
+        error: "Vous n'avez pas la permission de modifier ce commentaire" 
+      });
+    }
+
+    comment.text = text;
+    comment.updatedAt = new Date();
+    await ticket.save();
+
+    res.status(200).json({ 
+      success: true, 
+      data: comment 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// Supprimer un commentaire
+exports.deleteComment = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    const ticket = await Ticket.findById(req.params.ticketId)
+      .populate('comments.author', 'name role')
+      .populate('assignedAgent', 'name')
+      .populate('requester', 'name');
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    const comment = ticket.comments.id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, error: "Commentaire non trouvé" });
+    }
+
+    // Autorisations:
+    const isAuthor = comment.author._id.toString() === userId.toString();
+    const isAdmin = userRole === "Admin";
+    const isAssignedAgent = ticket.assignedAgent?._id.toString() === userId.toString();
+    const commentAuthorRole = comment.author.role;
+
+    // Règles de permission:
+    // - Admin peut tout supprimer
+    // - Agent peut supprimer ses propres commentaires ou ceux des clients
+    // - Client peut seulement supprimer ses propres commentaires
+    const canDelete = isAdmin || 
+                     (isAssignedAgent && (isAuthor || commentAuthorRole === "Client")) || 
+                     (isAuthor && !isAssignedAgent);
+
+    if (!canDelete) {
+      return res.status(403).json({ 
+        success: false, 
+        error: "Vous n'avez pas la permission de supprimer ce commentaire" 
+      });
+    }
+
+    ticket.comments.pull({ _id: req.params.commentId });
+    await ticket.save();
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Commentaire supprimé avec succès" 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+exports.getTicketById = async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(ticketId)) {
+      return res.status(400).json({ success: false, error: "ID de ticket invalide" });
+    }
+
+    const ticket = await Ticket.findById(ticketId)
+      .populate('requester', 'name email')
+      .populate('department', 'dep_name')
+      .populate('assignedAgent', 'name email')
+      .populate('metadata.category', 'cat_name')
+      .populate('comments.author', 'name role'); // Ajout de cette ligne
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    res.status(200).json({ success: true, data: ticket });
+  } catch (error) {
+    console.error("Erreur récupération ticket:", error);
+    res.status(500).json({ success: false, error: "Erreur serveur" });
+  }
+};
+
 // Clôturer un ticket
 exports.closeTicket = async (req, res) => {
   try {
@@ -429,7 +719,9 @@ exports.deleteTicket = async (req, res) => {
     res.status(500).json({ success: false, error: "Erreur serveur lors de la suppression du ticket" });
   }
 };
-// Récupérer tous les tickets (avec filtres optionnels)
+
+
+// Récupérer tous les tickets 
 exports.getTickets = async (req, res) => {
   try {
     const { status, department, priority, requester } = req.query;
@@ -469,5 +761,109 @@ exports.getTickets = async (req, res) => {
       success: false, 
       error: "Erreur serveur lors de la récupération des tickets" 
     });
+  }
+};
+
+// Ajoutez cette méthode à vos exports
+exports.loginWithGoogle = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ error: "Token Google manquant" });
+    }
+
+    // Vérifiez le token avec Google
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+
+    // Vérifiez si l'utilisateur existe déjà
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Créez un nouvel utilisateur si nécessaire
+      user = new User({
+        name,
+        email,
+        password: 'google-auth', // Mot de passe factice
+        role: 'Client', // Rôle par défaut
+        profileImage: picture,
+        verified: true
+      });
+      await user.save();
+    }
+
+    // Générez un token JWT
+    const jwtToken = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      ACCESS_TOKEN_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    return res.status(200).json({
+      token: jwtToken,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        profileImage: user.profileImage
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur Google Login:', error);
+    return res.status(500).json({ 
+      error: 'Échec de la connexion avec Google',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+exports.downloadFile = async (req, res) => {
+  try {
+    const { ticketId, fileId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(ticketId) || !mongoose.Types.ObjectId.isValid(fileId)) {
+      return res.status(400).json({ success: false, error: "ID invalide" });
+    }
+
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: "Ticket non trouvé" });
+    }
+
+    const file = ticket.files.id(fileId);
+    if (!file) {
+      return res.status(404).json({ success: false, error: "Fichier non trouvé dans le ticket" });
+    }
+
+    // Correction du chemin ici - utilisez 'public/tickets' au lieu de 'uploads'
+    const filePath = path.join(__dirname, '..', 'public', file.path);
+    console.log("Chemin du fichier:", filePath); // Pour le débogage
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "Fichier introuvable sur le serveur" });
+    }
+
+    // Définir les en-têtes pour forcer le téléchargement
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.originalName)}"`);
+    res.setHeader('Content-Type', file.fileType || 'application/octet-stream');
+
+    // Créer un stream de lecture et l'envoyer
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    console.error("Erreur de téléchargement:", error);
+    res.status(500).json({ success: false, error: "Erreur lors du téléchargement du fichier" });
   }
 };

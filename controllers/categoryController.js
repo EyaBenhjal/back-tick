@@ -1,6 +1,44 @@
 const Category = require("../models/Category");
 const mongoose = require("mongoose");
 
+const getCategoryForChatbot = async (req, res) => {
+  try {
+    const { categoryName } = req.params;
+    
+    if (!categoryName) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Le nom de la catégorie est requis" 
+      });
+    }
+
+    const category = await Category.findOne({ 
+      cat_name: new RegExp(categoryName, 'i') 
+    });
+
+    if (!category) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Catégorie non trouvée" 
+      });
+    }
+
+    const response = await category.getChatbotResponse();
+    
+    return res.status(200).json({ 
+      success: true, 
+      category: category.cat_name,
+      reply: response 
+    });
+
+  } catch (error) {
+    console.error("❌ Erreur getCategoryForChatbot:", error);
+    return res.status(500).json({ 
+      success: false, 
+      error: "Erreur serveur" 
+    });
+  }
+};
 const getCategories = async (req, res) => {
   try {
     const categories = await Category.find().populate("department");
@@ -103,5 +141,6 @@ module.exports = {
   getCategory, 
   updateCategory, 
   deleteCategory,
-  getCategoriesByDepartment 
+  getCategoriesByDepartment ,
+  getCategoryForChatbot
 };

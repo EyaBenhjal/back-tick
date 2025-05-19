@@ -1,10 +1,13 @@
 const jwt = require("jsonwebtoken"); 
 const User = require("../models/User");
-
+const { OAuth2Client } = require('google-auth-library');
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const bcrypt = require("bcrypt");
+
 const crypto = require("crypto");
 const { createAccessToken } = require("../utils/token");
 const { validateEmail } = require("../utils/validation");
+
 const sendVerificationEmail = require("../utils/email");
 const nodemailer = require('nodemailer');
 
@@ -260,5 +263,115 @@ exports.resetPassword = async (req, res) => {
   } catch (error) {
     console.error("Erreur reset password:", error);
     res.status(500).json({ message: "Erreur serveur" });
+  }
+};
+exports.loginWithLinkedIn = async (req, res) => {
+  const { code } = req.query;
+
+  if (!code) {
+    return res.status(400).json({ error: 'Code LinkedIn manquant.' });
+  }
+
+  try {
+    // 1. Échanger le code contre un access token
+    const tokenResponse = await axios.post('https://www.linkedin.com/oauth/v2/accessToken', null, {
+      params: {
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+      },
+    });
+
+    const accessToken = tokenResponse.data.access_token;
+
+    // 2. Utiliser le token pour obtenir les infos du profil
+    const profileResponse = await axios.get('https://api.linkedin.com/v2/me', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const emailResponse = await axios.get('https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const linkedInId = profileResponse.data.id;
+    const name = profileResponse.data.localizedFirstName + ' ' + profileResponse.data.localizedLastName;
+    const email = emailResponse.data.elements[0]['handle~'].emailAddress;
+
+    // 3. Vérifier si utilisateur existe ou créer
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = await User.create({
+        name,
+        email,
+        password: 'linkedin', // optionnel, ou laisse vide
+        role: 'Client',
+        verified: true
+      });
+    }
+
+    // 4. Générer un JWT
+    const token = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      ACCESS_TOKEN_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    return res.status(200).json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur LinkedIn Login:', error.response?.data || error.message);
+    return res.status(500).json({ error: 'Échec de la connexion avec LinkedIn.' });
+  }
+};
+
+exports.loginWithGoogle = async (req, res) => {
+  try {
+    const { token } = req.body;
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+
+    // Logique de création ou de recherche de l'utilisateur...
+    // Exemple :
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = await User.create({
+        email,
+        name,
+        profilePicture: picture,
+        role: 'Client', // ou autre par défaut
+      });
+    }
+
+    // Générer JWT interne
+    const jwtToken = generateJWT(user); // Votre logique ici
+
+    res.status(200).json({ token: jwtToken, user });
+  } catch (err) {
+    console.error("Erreur Google Login:", err);
+    res.status(500).json({ error: "Échec de la connexion avec Google" });
   }
 };

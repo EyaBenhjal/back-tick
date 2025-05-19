@@ -5,7 +5,8 @@ const {
   getCategory,
   updateCategory,
   deleteCategory,
-  getCategoriesByDepartment
+  getCategoriesByDepartment,
+  getCategoryForChatbot
 } = require("../controllers/categoryController");
 
 const router = express.Router();
@@ -16,5 +17,6 @@ router.get("/:id", getCategory);
 router.put("/:id", updateCategory);
 router.delete("/:id", deleteCategory);
 router.get('/by-department/:departmentId', getCategoriesByDepartment);
+router.get('/chatbot/:categoryName', getCategoryForChatbot);
 
 module.exports = router;

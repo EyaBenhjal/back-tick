@@ -10,6 +10,20 @@ const userSchema = new mongoose.Schema({
       ref: 'Department',
       required: false
   },
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true ,
+    required: false // Permet plusieurs documents sans ce champ
+  },
+  profileImage: {
+    type: String,
+    default: "/uploads/default-profile.png"
+  },
+  verified: {
+    type: Boolean,
+    default: false
+  },
     verified: { type: Boolean, default: false },
     verificationToken: { type: String },
     resetToken: { type: String }, 
@@ -18,7 +32,7 @@ const userSchema = new mongoose.Schema({
       type: String,
       enum: ['Client', 'Agent', 'Admin'], // Valeurs autorisées
       required: true,
-      default: 'Client' // Valeur par défaut
+      default: 'Client' 
     },
   
 

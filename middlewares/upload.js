@@ -1,6 +1,3 @@
-
-
-
 const multer = require("multer");
 const path = require("path");
 
@@ -56,7 +53,7 @@ const ticketUpload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB
   }
-}).single('file'); // Champ attendu: 'file'
+}).single('files',4); // Champ attendu: 'file'
 
 // Export unique et organisé
 module.exports = {

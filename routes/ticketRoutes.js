@@ -2,12 +2,17 @@ const express = require('express');
 const router = express.Router();
 const { 
   createTicket,
-  getTickets,
+  getTickets, 
   getTicketById,
   updateTicket,
   deleteTicket,
   assignAgent,
-  closeTicket
+  closeTicket,
+  addComment,
+  updateComment,
+  deleteComment,
+  downloadFile,
+  viewFile
 } = require('../controllers/ticketControllers');
 const { verifyAccessToken } = require('../middlewares/authMiddleware');
 const { ticketUpload } = require('../middlewares/upload');
@@ -20,4 +25,10 @@ router.put('/:ticketId', verifyAccessToken, ticketUpload, updateTicket);
 router.delete('/:ticketId', verifyAccessToken, deleteTicket);
 router.put('/:ticketId/assign', verifyAccessToken, assignAgent);
 router.put('/:ticketId/close', verifyAccessToken, closeTicket);
+router.post('/:ticketId/comments', verifyAccessToken, addComment);
+router.put('/:ticketId/comments/:commentId', verifyAccessToken, updateComment);
+router.delete('/:ticketId/comments/:commentId', verifyAccessToken, deleteComment);
+router.get('/:ticketId/files/:fileId/download', verifyAccessToken, downloadFile);
+router.get('/:ticketId/files/:fileId/view', verifyAccessToken, viewFile);
+
 module.exports = router;

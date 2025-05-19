@@ -12,6 +12,23 @@ const ticketSchema = new mongoose.Schema({
     required: [true, "La description est obligatoire"],
     minlength: [6, "La description doit contenir au moins 6 caractères"]
   },
+  comments: [{
+    text: {
+      type: String,
+      required: [true, "Le commentaire ne peut pas être vide"],
+      trim: true,
+      maxlength: [1000, "Le commentaire ne peut dépasser 1000 caractères"]
+    },
+    author: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   department: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Department",
@@ -72,8 +89,6 @@ const ticketSchema = new mongoose.Schema({
     dueDate: Date,
     timeSpent: {
       type: Number,
-      default: 0,
-      min: 0
     }
   },
   createdBy: {
@@ -118,6 +133,15 @@ const ticketSchema = new mongoose.Schema({
       type: String,
       required: [true, "Le nom original du fichier est obligatoire"]
     },
+    
+chatHistory: [{
+  from: { type: String, enum: ['user', 'bot'], required: true },
+  content: { type: String, required: true },
+  timestamp: { type: Date, default: Date.now }
+}],
+keywords: [String],
+sentiment: String
+,
     fileType: {
       type: String,
       required: [true, "Le type de fichier est obligatoire"]
@@ -132,9 +156,47 @@ const ticketSchema = new mongoose.Schema({
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
+// Dans models/Ticket.js
+ticketSchema.statics.createFromChatbot = async function(chatData) {
+  const { userId, message, files = [], category } = chatData;
+  
+  // Trouver le département par défaut pour cette catégorie
+  const defaultDept = await mongoose.model('Department').findOne({ 
+    categories: category 
+  });
 
+  return this.create({
+    title: `Demande chatbot: ${message.substring(0, 50)}`,
+    description: message,
+    department: defaultDept?._id,
+    requester: userId,
+    clientDetails: {
+      name: chatData.userName,
+      email: chatData.userEmail
+    },
+    metadata: {
+      category: category,
+      requestType: "Demande" // Ou déterminé dynamiquement
+    },
+    files: files.map(file => ({
+      path: file.url,
+      originalName: file.originalname,
+      fileType: file.mimetype
+    })),
+    chatHistory: [{
+      from: 'user',
+      content: message,
+      timestamp: new Date()
+    }]
+  });
+};
 
-
-
-
+ticketSchema.methods.addChatResponse = function(response) {
+  this.chatHistory.push({
+    from: 'bot',
+    content: response,
+    timestamp: new Date()
+  });
+  return this.save();
+};
 module.exports = mongoose.model("Ticket", ticketSchema);

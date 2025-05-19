@@ -9,7 +9,7 @@ const {
   getUser,
   upload 
 } = require("../controllers/userController");
-const { verifyAccessToken } = require("../middlewares/authMiddleware"); // Ajoutez cette ligne
+const { verifyAccessToken } = require("../middlewares/authMiddleware");
 
 router.get("/list", getAllUsers);
 router.get("/me", verifyAccessToken, getCurrentUser); 
