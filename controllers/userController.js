@@ -48,52 +48,56 @@ exports.upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB
 });
 
-// Mise à jour de l'utilisateur
 exports.updateUser = async (req, res) => {
-  try {
-    const { id } = req.params;
-    let updates = req.body;
+    try {
+        const { id } = req.params;
+        let updates = req.body;
 
-    // Si un fichier est uploadé
-    if (req.file) {
-      updates.profileImage = '/uploads/' + req.file.filename;
+        // Si un fichier est uploadé
+        if (req.file) {
+            updates.profileImage = '/uploads/' + req.file.filename;
+        }
+
+        // Gestion des compétences (si c'est un agent)
+        if (updates.role === 'Agent') {
+            if (updates.skills) {
+                updates.skills = updates.skills.split(',').map(skill => skill.trim());
+            }
+            
+            // Gestion des réseaux sociaux
+            if (updates.socialMedia) {
+                try {
+                    updates.socialMedia = JSON.parse(updates.socialMedia);
+                } catch (e) {
+                    updates.socialMedia = {};
+                }
+            }
+        } else {
+            // Supprimer les champs spécifiques aux agents si le rôle change
+            updates.bio = undefined;
+            updates.skills = undefined;
+            updates.socialMedia = undefined;
+        }
+
+        const user = await User.findByIdAndUpdate(
+            id, 
+            updates, 
+            { new: true }
+        ).select("-password").populate('department', 'dep_name');
+
+        if (!user) {
+            return res.status(404).json({ success: false, msg: "Utilisateur non trouvé." });
+        }
+
+        res.json({ 
+            success: true,
+            msg: "Utilisateur mis à jour.", 
+            user
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, msg: "Erreur lors de la mise à jour." });
     }
-
-    // Gestion du département
-    updates.department = updates.department || null;
-
-    // Ne pas mettre à jour le mot de passe s'il est vide
-    if (updates.password === '') {
-      delete updates.password;
-    }
-
-    const user = await User.findByIdAndUpdate(
-      id, 
-      updates, 
-      { new: true }
-    ).select("-password").populate('department', 'dep_name');
-
-    if (!user) {
-      return res.status(404).json({ success: false, msg: "Utilisateur non trouvé." });
-    }
-
-    // Construire l'URL complète de l'image
-    const userWithImage = {
-      ...user.toObject(),
-      profileImage: user.profileImage 
-        ? `http://localhost:5000${user.profileImage}`
-        : 'http://localhost:5000/uploads/default.jpg'
-    };
-
-    res.json({ 
-      success: true,
-      msg: "Utilisateur mis à jour.", 
-      user: userWithImage
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, msg: "Erreur lors de la mise à jour." });
-  }
 };
 exports.deleteUser = async (req, res) => {
   try {

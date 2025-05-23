@@ -76,7 +76,7 @@ const updateDepartment= async (req, res) => {
 
     return res.status(200).json({ 
       success: true, 
-      department: updatedDepartment// Uniformisation avec getDepartment
+      department: updatedDepartment
     });
   } catch (error) {
     console.error("Erreur lors de la mise à jour du département :", error);

@@ -1,112 +1,199 @@
-import Ticket from "../models/Ticket"; // Modèle Mongoose des tickets
-import User from "../models/User";
-import Department from "../models/Department";
-import Category from "../models/Category";
-// Statistiques globales (totaux, résolus, temps moyen)
-export const getTicketStats = async (req, res) => {
-  try {
-    // 1. Total des tickets
-    const totalTickets = await Ticket.countDocuments();
+const Ticket = require("../models/Ticket");
+const Department = require("../models/Department");
+const Category = require("../models/Category");
+const mongoose = require("mongoose");
 
-    // 2. Tickets résolus
-    const resolvedTickets = await Ticket.countDocuments({ status: "resolved" });
+module.exports = {
+  getTicketStats: async (req, res) => {
+    try {
+      // 1. Initialisation des filtres
+      const userDepartment = req.user.department;
+      const baseFilter = userDepartment ? { department: userDepartment } : {};
+      const sevenDaysAgo = new Date(new Date().setDate(new Date().getDate()-7));
 
-    // 3. Temps moyen de résolution (exemple avec un champ `resolutionTime` en heures)
-    const avgResolution = await Ticket.aggregate([
-      { $match: { status: "resolved" } },
-      { $group: { _id: null, avg: { $avg: "$resolutionTime" } } }
-    ]);
+      // 2. Requêtes parallélisées pour les statistiques de base
+      const [
+        totalTickets, 
+        resolvedTickets, 
+        openTickets,
+        newTickets,
+        totalDepartments,
+        totalCategories
+      ] = await Promise.all([
+        Ticket.countDocuments(baseFilter),
+        Ticket.countDocuments({ ...baseFilter, status: "resolved" }),
+        Ticket.countDocuments({ ...baseFilter, status: "open" }),
+        Ticket.countDocuments({ 
+          ...baseFilter, 
+          status: "new",
+          createdAt: { $gte: sevenDaysAgo }
+        }),
+        Department.countDocuments(),
+        Category.countDocuments()
+      ]);
 
-    // 4. Répartition par catégorie (si vous avez un champ `category`)
-    const byCategory = await Ticket.aggregate([
-      { $group: { _id: "$category", count: { $sum: 1 } } }
-    ]);
+      // 3. Aggrégations pour les temps moyens
+      const [resolutionStats, responseTimeStats] = await Promise.all([
+        Ticket.aggregate([
+          { $match: { ...baseFilter, status: "resolved" } },
+          { 
+            $group: {
+              _id: null,
+              avgResolution: { $avg: "$resolutionTime" },
+              avgResponse: { $avg: "$firstResponseTime" }
+            } 
+          }
+        ]),
+        Ticket.aggregate([
+          { $match: baseFilter },
+          {
+            $group: {
+              _id: null,
+              avgFirstResponse: { $avg: "$firstResponseTime" },
+              avgResolution: { $avg: "$resolutionTime" }
+            }
+          }
+        ])
+      ]);
 
-    res.json({
-      total: totalTickets,
-      resolved: resolvedTickets,
-      resolutionRate: (resolvedTickets / totalTickets * 100).toFixed(1) + "%",
-      avgResolutionTime: avgResolution[0]?.avg?.toFixed(1) || 0 + "h",
-      byCategory: byCategory.map(item => ({ name: item._id, value: item.count }))
-    });
+      // 4. Statistiques par catégorie
+      const byCategory = await Ticket.aggregate([
+        { $match: baseFilter },
+        { 
+          $lookup: {
+            from: "categories",
+            localField: "metadata.category",
+            foreignField: "_id",
+            as: "categoryData"
+          }
+        },
+        { $unwind: "$categoryData" },
+        { 
+          $group: { 
+            _id: "$categoryData.cat_name",
+            total: { $sum: 1 },
+            resolved: { 
+              $sum: { $cond: [{ $eq: ["$status", "resolved"] }, 1, 0] } 
+            }
+          } 
+        },
+        { 
+          $project: { 
+            name: "$_id", 
+            value: "$total", 
+            resolved: 1, 
+            _id: 0 
+          } 
+        }
+      ]);
 
-  } catch (error) {
-    res.status(500).json({ error: "Erreur serveur" });
-  }
-};
+      // 5. Statistiques par département (uniquement pour les admins)
+      let byDepartment = [];
+      if (!userDepartment) {
+        byDepartment = await Ticket.aggregate([
+          {
+            $lookup: {
+              from: "departments",
+              localField: "department",
+              foreignField: "_id",
+              as: "departmentData"
+            }
+          },
+          { $unwind: "$departmentData" },
+          { 
+            $group: { 
+              _id: "$departmentData.dep_name",
+              total: { $sum: 1 },
+              resolved: { $sum: { $cond: [{ $eq: ["$status", "resolved"] }, 1, 0] } }
+            } 
+          },
+          { 
+            $project: { 
+              name: "$_id", 
+              value: "$total", 
+              resolved: 1, 
+              _id: 0 
+            } 
+          }
+        ]);
+      }
 
-// Évolution mensuelle (nouveaux/résolus)
-export const getMonthlyTrends = async (req, res) => {
-  try {
-    const trends = await Ticket.aggregate([
-      {
-        $group: {
-          _id: { $month: "$createdAt" },
-          created: { $sum: 1 },
-          resolved: { 
-            $sum: { $cond: [{ $eq: ["$status", "resolved"] }, 1, 0] } 
+      // 6. Performance des agents - VERSION CORRIGÉE
+      const agentStats = await Ticket.aggregate([
+        { $match: baseFilter },
+        {
+          $lookup: {
+            from: "users",
+            localField: "assignedAgent",
+            foreignField: "_id",
+            as: "agentData"
+          }
+        },
+        { $unwind: "$agentData" },
+        {
+          $group: {
+            _id: "$agentData._id",
+            name: { $first: "$agentData.name" },
+            email: { $first: "$agentData.email" },
+            total: { $sum: 1 },
+            resolved: { $sum: { $cond: [{ $eq: ["$status", "resolved"] }, 1, 0] } },
+            avgResolution: { $avg: "$resolutionTime" },
+            avgResponse: { $avg: "$firstResponseTime" }
+          }
+        },
+        { 
+          $project: { 
+            name: 1,
+            email: 1,
+            total: 1,
+            resolved: 1,
+            resolutionRate: { 
+              $cond: [
+                { $eq: ["$total", 0] },
+                0,
+                { $multiply: [{ $divide: ["$resolved", "$total"] }, 100] }
+              ]
+            },
+            avgResolution: 1,
+            avgResponse: 1,
+            _id: 0
           }
         }
-      },
-      { $sort: { "_id": 1 } }
-    ]);
+      ]);
 
-    // Formatage pour le frontend (ex: [{ name: "Jan", created: 10, resolved: 6 }])
-    const formatted = trends.map(t => ({
-      name: new Date(0, t._id - 1).toLocaleString('fr-FR', { month: 'short' }),
-      created: t.created,
-      resolved: t.resolved
-    }));
+      // 7. Préparation de la réponse
+      const response = {
+        totals: {
+          all: totalTickets,
+          resolved: resolvedTickets,
+          open: openTickets,
+          new: newTickets,
+          departments: totalDepartments,
+          categories: totalCategories,
+          resolutionRate: totalTickets > 0 
+            ? parseFloat((resolvedTickets / totalTickets * 100).toFixed(1))
+            : 0
+        },
+        times: {
+          resolution: resolutionStats[0]?.avgResolution || 0,
+          response: resolutionStats[0]?.avgResponse || 0,
+          firstResponse: responseTimeStats[0]?.avgFirstResponse || 0,
+          avgResolution: responseTimeStats[0]?.avgResolution || 0
+        },
+        byCategory,
+        byDepartment,
+        agents: agentStats
+      };
 
-    res.json(formatted);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
+      res.json(response);
 
-
-export const getGlobalStats = async (req, res) => {
-  try {
-    // 1. Comptage des utilisateurs par rôle
-    const usersByRole = await User.aggregate([
-      { $group: { _id: "$role", count: { $sum: 1 } } }
-    ]);
-
-    // 2. Total départements et catégories
-    const [totalDepartments, totalCategories] = await Promise.all([
-      Department.countDocuments(),
-      Category.countDocuments()
-    ]);
-
-    // 3. Catégories par département
-    const categoriesByDepartment = await Category.aggregate([
-      {
-        $lookup: {
-          from: "departments",
-          localField: "department",
-          foreignField: "_id",
-          as: "dept"
-        }
-      },
-      { $unwind: "$dept" },
-      { $group: { _id: "$dept.dep_name", count: { $sum: 1 } } }
-    ]);
-
-    res.json({
-      users: {
-        total: await User.countDocuments(),
-        byRole: usersByRole.map(item => ({ role: item._id, count: item.count }))
-      },
-      departments: {
-        total: totalDepartments,
-        categories: categoriesByDepartment
-      },
-      categories: {
-        total: totalCategories
-      }
-    });
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    } catch (error) {
+      console.error("Error in getTicketStats:", error);
+      res.status(500).json({ 
+        success: false,
+        error: "Erreur serveur",
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
   }
 };

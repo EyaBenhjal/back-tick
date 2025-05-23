@@ -7,13 +7,20 @@ require("dotenv").config();
 const NLPService = require('./services/nlpService');
 const Solution = require('./models/Solution');
 const Category = require('./models/Category');
-const app = express();
 
+const app = express();
 app.use(cors({
-  origin: 'http://localhost:5173', // ou 3000 selon votre port frontend
-  credentials: true
+  origin: 'http://localhost:5173',
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
 // Middlewares
 app.use(express.json());
 
@@ -27,6 +34,7 @@ const userRoutes = require("./routes/userRoutes");
 const categoryRoutes = require("./routes/category");
 const notificationRoutes = require("./routes/notificationRoutes");
 const chatbotRoutes = require('./routes/chatbotRoutes');
+const statsRoutes= require('./routes/statsRoutes')
 
 // Connexion MongoDB
 const mongoUrl = process.env.MONGODB_URL;
@@ -109,7 +117,7 @@ async function startServer() {
     app.use("/api/notifications", notificationRoutes);
     app.use("/api/chatbot", chatbotRoutes);
     app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
-    
+app.use('/api/stats', statsRoutes);
     if (process.env.NODE_ENV === "production") {
       app.use(express.static(path.resolve(__dirname, "../frontend/build")));
       app.get("*", (req, res) => res.sendFile(path.resolve(__dirname, "../frontend/build/index.html")));
@@ -141,8 +149,4 @@ async function startServer() {
 }
 
 startServer();
-app.use(cors({
-  origin: 'http://localhost:5173',
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+;

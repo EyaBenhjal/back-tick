@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema({
     resetTokenExpires: { type: Date }, 
     role: {
       type: String,
-      enum: ['Client', 'Agent', 'Admin'], // Valeurs autorisées
+      enum: ['Client', 'Agent', 'Admin'], 
       required: true,
       default: 'Client' 
     },

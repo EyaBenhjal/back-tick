@@ -127,16 +127,9 @@ exports.login = async (req, res) => {
     res.status(500).json({ error: "Erreur serveur" });
   }
   
-};exports.createUserByAdmin = async (req, res) => {
+};
+exports.createUserByAdmin = async (req, res) => {
   try {
-    // Vérifiez d'abord si un fichier a été uploadé
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        msg: "Une image de profil est requise"
-      });
-    }
-
     const { name, email, password, role, department } = req.body;
     
     // Validation des données
@@ -172,19 +165,60 @@ exports.login = async (req, res) => {
       password: hashedPassword,
       role,
       department,
-      profileImage: `/uploads/${req.file.filename}`,
-      verified: true // Admin crée des comptes déjà vérifiés
+      profileImage: req.file ? `/uploads/${req.file.filename}` : '/uploads/default-profile.png',
+      verified: true ,
+      bio: req.body.bio || '',
+  skills: req.body.skills || [],
+  socialMedia: {
+    linkedin: '',
+    twitter: ''
+  }
+
+
+
     });
+
+    // Envoi de l'email de bienvenue
+    try {
+      const transporter = nodemailer.createTransport({
+        service: 'Gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
+        }
+      });
+
+      await transporter.sendMail({
+        from: `"Votre Plateforme" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: 'Bienvenue sur notre plateforme',
+        html: `
+          <h1>Bienvenue, ${name} !</h1>
+          <p>Un administrateur a créé un compte pour vous sur notre plateforme.</p>
+          <p>Voici vos informations de connexion :</p>
+          <ul>
+            <li>Email: ${email}</li>
+            <li>Mot de passe temporaire: ${password}</li>
+          </ul>
+          <p>Nous vous recommandons de changer votre mot de passe après votre première connexion.</p>
+          <a href="http://localhost:3000/login">Se connecter</a>
+        `
+      });
+    } catch (emailError) {
+      console.error("Erreur lors de l'envoi de l'email:", emailError);
+      // Ne pas bloquer le processus même si l'email échoue
+    }
 
     return res.status(201).json({
       success: true,
-      msg: "Utilisateur créé avec succès",
+      msg: "Utilisateur créé avec succès et email envoyé",
       user: {
         id: newUser._id,
         name: newUser.name,
         email: newUser.email,
         role: newUser.role,
         department: newUser.department
+
       }
     });
 
@@ -309,7 +343,7 @@ exports.loginWithLinkedIn = async (req, res) => {
       user = await User.create({
         name,
         email,
-        password: 'linkedin', // optionnel, ou laisse vide
+        password: 'linkedin', 
         role: 'Client',
         verified: true
       });
@@ -344,34 +378,53 @@ exports.loginWithLinkedIn = async (req, res) => {
 
 exports.loginWithGoogle = async (req, res) => {
   try {
-    const { token } = req.body;
-    const ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID,
+    const { access_token } = req.body;
+
+    if (!access_token) {
+      return res.status(400).json({ error: "Google access token is required" });
+    }
+
+    // Option 1: Utiliser l'API People pour obtenir les infos utilisateur
+    const { data } = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
     });
 
-    const payload = ticket.getPayload();
-    const { email, name, picture } = payload;
+    const { email, name, picture } = data;
 
-    // Logique de création ou de recherche de l'utilisateur...
-    // Exemple :
+    // Vérifier/Créer l'utilisateur
     let user = await User.findOne({ email });
 
     if (!user) {
       user = await User.create({
-        email,
         name,
-        profilePicture: picture,
-        role: 'Client', // ou autre par défaut
+        email,
+        password: crypto.randomBytes(16).toString('hex'),
+        profileImage: picture,
+        verified: true,
+        role: 'Client'
       });
     }
 
-    // Générer JWT interne
-    const jwtToken = generateJWT(user); // Votre logique ici
+    // Générer JWT
+    const token = jwt.sign(
+      { id: user._id, email, role: user.role },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: '24h' }
+    );
 
-    res.status(200).json({ token: jwtToken, user });
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        email,
+        name: user.name,
+        role: user.role,
+        profileImage: user.profileImage
+      }
+    });
+
   } catch (err) {
-    console.error("Erreur Google Login:", err);
-    res.status(500).json({ error: "Échec de la connexion avec Google" });
+    console.error("Google auth error:", err);
+    res.status(401).json({ error: "Google authentication failed" });
   }
 };

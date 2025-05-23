@@ -1,12 +1,13 @@
 const express = require("express");
 const { addDepartment, getDepartments, updateDepartment, getDepartment, deleteDepartment} = require("../controllers/departmentController");
+const { verifyAccessToken } = require("../middlewares/authMiddleware");
 
 const router = express.Router();
 
-router.post("/add", addDepartment); // Supprimer verifyAccessToken temporairement
-router.get("/list", getDepartments);
-router.get("/:id", getDepartment);
-router.put("/:id", updateDepartment);
-router.delete("/:id", deleteDepartment);
 
+router.post("/add", verifyAccessToken, addDepartment);
+router.get("/list", verifyAccessToken, getDepartments);
+router.get("/:id", verifyAccessToken, getDepartment);
+router.put("/:id", verifyAccessToken, updateDepartment);
+router.delete("/:id", verifyAccessToken, deleteDepartment);
 module.exports = router;

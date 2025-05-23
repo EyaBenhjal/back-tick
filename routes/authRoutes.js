@@ -39,6 +39,5 @@ router.post("/admin/create-user", upload.single('profileImage'), createUserByAdm
 router.post('/forgot-password', userController.forgotPassword);
 router.post('/reset-password/:token', userController.resetPassword);
 router.get('/auth/linkedin/callback', loginWithLinkedIn);
-router.post("/google", loginWithGoogle);
-
+router.post("/google/callback", loginWithGoogle);
 module.exports = router;
