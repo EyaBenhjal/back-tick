@@ -12,23 +12,30 @@ const ticketSchema = new mongoose.Schema({
     required: [true, "La description est obligatoire"],
     minlength: [6, "La description doit contenir au moins 6 caractères"]
   },
-  comments: [{
-    text: {
-      type: String,
-      required: [true, "Le commentaire ne peut pas être vide"],
-      trim: true,
-      maxlength: [1000, "Le commentaire ne peut dépasser 1000 caractères"]
-    },
-    author: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
+ // Dans back_ticket/models/Ticket.js
+comments: [{
+  text: {
+    type: String,
+    required: [true, "Le commentaire ne peut pas être vide"],
+    trim: true,
+    maxlength: [1000, "Le commentaire ne peut dépasser 1000 caractères"]
+  },
+
+  author: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date
+  },
+  deleted: { type: Boolean, default: false }, // ✅ Soft delete flag
+  deletedAt: { type: Date } 
+}],
   department: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Department",
@@ -74,6 +81,12 @@ const ticketSchema = new mongoose.Schema({
       match: [/.+\@.+\..+/, 'Veuillez entrer un email valide']
     }
   },
+  satisfaction: { 
+  type: String,
+  enum: ['Très satisfait', 'Satisfait', 'Moyen', 'Insatisfait', 'Très insatisfait'],
+  default: 'Moyen'
+},
+
   metadata: {
     requestType: {
       type: String,
@@ -133,7 +146,7 @@ const ticketSchema = new mongoose.Schema({
       type: String,
       required: [true, "Le nom original du fichier est obligatoire"]
     },
-    
+
 chatHistory: [{
   from: { type: String, enum: ['user', 'bot'], required: true },
   content: { type: String, required: true },

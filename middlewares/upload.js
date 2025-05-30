@@ -53,7 +53,7 @@ const ticketUpload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB
   }
-}).single('files',4); // Champ attendu: 'file'
+}).array('files', 5);
 
 // Export unique et organisé
 module.exports = {

@@ -12,7 +12,8 @@ const {
   updateComment,
   deleteComment,
   downloadFile,
-  viewFile
+  viewFile,
+  updateSatisfaction
 } = require('../controllers/ticketControllers');
 const { verifyAccessToken } = require('../middlewares/authMiddleware');
 const { ticketUpload } = require('../middlewares/upload');
@@ -30,5 +31,6 @@ router.put('/:ticketId/comments/:commentId', verifyAccessToken, updateComment);
 router.delete('/:ticketId/comments/:commentId', verifyAccessToken, deleteComment);
 router.get('/:ticketId/files/:fileId/download', verifyAccessToken, downloadFile);
 router.get('/:ticketId/files/:fileId/view', verifyAccessToken, viewFile);
+router.put('/satisfaction/:ticketId', verifyAccessToken,updateSatisfaction);
 
 module.exports = router;

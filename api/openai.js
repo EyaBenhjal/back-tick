@@ -6,7 +6,6 @@ router.post("/", async (req, res) => {
   const { message, category } = req.body;
 
   try {
-    // Exemple : utilisez OpenAI (remplacez avec votre clé et modèle si nécessaire)
     const openaiResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {

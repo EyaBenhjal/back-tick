@@ -51,6 +51,138 @@ module.exports.createTicketNotification = async (ticket, actionUser, message) =>
     throw error;
   }
 };
+const createNotification = async (req, res) => {
+  try {
+    const { userId, ticketId, title, message, type } = req.body;
+    const notification = new Notification({
+      userId,
+      ticketId,
+      title,
+      message,
+      type,
+    });
+    await notification.save();
+
+    // WebSocket temps réel
+    if (req.wss) {
+      const { sendNotification } = require('../websocket');
+      sendNotification(req.wss, userId, notification);
+    }
+
+    res.status(201).json(notification);
+  } catch (error) {
+    console.error('Erreur lors de la création de la notification:', error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+
+exports.createCommentNotification = async (ticket, commentAuthor, commentText, wss) => {
+  try {
+    const usersToNotify = new Set();
+
+    if (ticket.requester.toString() !== commentAuthor._id.toString()) {
+      usersToNotify.add(ticket.requester.toString());
+    }
+
+    if (ticket.assignedAgent &&
+        ticket.assignedAgent.toString() !== commentAuthor._id.toString()) {
+      usersToNotify.add(ticket.assignedAgent.toString());
+    }
+
+    const notifications = [];
+    const notificationPromises = Array.from(usersToNotify).map(async userId => {
+      const notification = await Notification.create({
+        userId,
+        ticketId: ticket._id,
+        title: `Ticket ${ticket.ticketNumber || ticket._id} mis à jour`,
+        message: `${commentAuthor.name} a ajouté un commentaire : "${commentText.substring(0, 50)}${commentText.length > 50 ? '...' : ''}"`,
+        type: 'new_comment',
+        isRead: false
+      });
+
+      notifications.push(notification);
+
+      sendNotification(wss, userId, {
+        _id: notification._id,
+        title: notification.title,
+        message: notification.message,
+        isRead: false,
+        createdAt: notification.createdAt
+      });
+    });
+
+    await Promise.all(notificationPromises);
+    return notifications;
+  } catch (error) {
+    console.error("Erreur création notification commentaire:", error);
+    throw error;
+  }
+};
+
+
+
+
+const getUserNotifications = async (req, res) => {
+  const userId = req.user.id;
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(400).json({ success: false, error: "ID de ticket invalide" });
+  }
+  try {
+    const notifications = await Notification.find({ userId: req.user._id })
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, data: notifications });
+  } catch (error) {
+    console.error("Erreur récupération notifications :", error);
+    res.status(500).json({ success: false, error: "Erreur serveur" });
+  }
+  console.log(req.user.id)
+};
+
+exports.markAsRead = async (req, res) => {
+  try {
+    const notification = await Notification.findOne({
+      _id: req.params.id,
+      userId: req.user.id
+    });
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        error: 'Notification non trouvée ou non autorisée'
+      });
+    }
+
+    notification.isRead = true;
+    await notification.save();
+
+    res.status(200).json({
+      success: true,
+      notification
+    });
+  } catch (error) {
+    console.error("Erreur marquage comme lu:", error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur serveur',
+      systemMessage: error.message
+    });
+  }
+};
+
+// notificationController.js
+exports.getAdminNotifications = async (req, res) => {
+  if (req.user.role !== 'Admin') {
+    return res.status(403).json({ error: 'Accès refusé' });
+  }
+
+  const notifications = await Notification.find()
+    .sort({ createdAt: -1 })
+    .populate('userId', 'name role')
+    .populate('ticketId');
+  
+  res.json({ success: true, notifications });
+};
 // Version pour les requêtes API directes
 exports.createNotification = async (req, res) => {
   try {

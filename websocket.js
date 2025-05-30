@@ -37,25 +37,15 @@ const setupWebSocket = (server) => {
   return wss;
 };
 
-const sendNotification = (wss, userId, notification) => {
-  if (!wss) {
-    console.error('WebSocket Server non initialisé');
-    return;
-  }
-
+function sendNotification(wss, userId, notificationData) {
   wss.clients.forEach(client => {
-    if (client.userId === userId.toString() && client.readyState === WebSocket.OPEN) {
-      try {
-        client.send(JSON.stringify({
-          ...notification,
-          type: 'notification'
-        }));
-        console.log(`Notification envoyée à l'utilisateur ${userId}`);
-      } catch (error) {
-        console.error(`Erreur lors de l'envoi de la notification à l'utilisateur ${userId}:`, error);
-      }
+    if (client.userId === userId.toString()) {
+      client.send(JSON.stringify({
+        type: 'NEW_NOTIFICATION',
+        data: notificationData
+      }));
     }
   });
-};
+}
 
 module.exports = { setupWebSocket, sendNotification };
