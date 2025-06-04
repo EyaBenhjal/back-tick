@@ -1,9 +1,11 @@
+
 const express = require("express");
 const router = express.Router();
-const { handleCategoryChatbot } = require("../controllers/chatbotController"); // Assurez-vous que ce chemin est correct
+const { detectCategory, handleCategoryChatbot,handleAutoChatbot } = require('../controllers/chatbotController');
+const { verifyAccessToken } = require("../middlewares/authMiddleware");
 
-console.log(handleCategoryChatbot); 
+router.post("/detect-category", verifyAccessToken, detectCategory);
+router.post("/chatbot-response", verifyAccessToken, handleCategoryChatbot);
 
-router.post("/by-category", handleCategoryChatbot);
-
+router.post("/auto-chatbot", verifyAccessToken, handleAutoChatbot);
 module.exports = router;

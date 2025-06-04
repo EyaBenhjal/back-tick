@@ -4,17 +4,16 @@ const {
   getAllUsers, 
   updateUser, 
   getCurrentUser,
-
   deleteUser, 
   getUser,
   upload 
 } = require("../controllers/userController");
 const { verifyAccessToken } = require("../middlewares/authMiddleware");
 
-router.get("/list", getAllUsers);
+router.get("/list",verifyAccessToken, getAllUsers);
 router.get("/me", verifyAccessToken, getCurrentUser); 
 
-router.put("/:id", upload.single('profileImage'), updateUser);
-router.delete("/:id", deleteUser);
-router.get("/:id", getUser);
+router.put("/:id",verifyAccessToken, upload.single('profileImage'), updateUser);
+router.delete("/:id",verifyAccessToken, deleteUser);
+router.get("/:id",verifyAccessToken, getUser);
 module.exports = router;

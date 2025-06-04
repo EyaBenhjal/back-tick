@@ -428,3 +428,68 @@ exports.loginWithGoogle = async (req, res) => {
     res.status(401).json({ error: "Google authentication failed" });
   }
 };
+// Ajoutez cette méthode à vos exports
+exports.loginWithGoogle = async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ error: "Token Google manquant" });
+    }
+
+    // Vérifiez le token avec Google
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+
+    // Vérifiez si l'utilisateur existe déjà
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Créez un nouvel utilisateur si nécessaire
+      user = new User({
+        name,
+        email,
+        password: 'google-auth', // Mot de passe factice
+        role: 'Client', // Rôle par défaut
+        profileImage: picture,
+        verified: true
+      });
+      await user.save();
+    }
+
+    // Générez un token JWT
+    const jwtToken = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
+      ACCESS_TOKEN_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    return res.status(200).json({
+      token: jwtToken,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        profileImage: user.profileImage
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur Google Login:', error);
+    return res.status(500).json({ 
+      error: 'Échec de la connexion avec Google',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};

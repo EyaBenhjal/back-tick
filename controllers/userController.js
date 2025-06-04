@@ -58,13 +58,11 @@ exports.updateUser = async (req, res) => {
             updates.profileImage = '/uploads/' + req.file.filename;
         }
 
-        // Gestion des compétences (si c'est un agent)
         if (updates.role === 'Agent') {
             if (updates.skills) {
                 updates.skills = updates.skills.split(',').map(skill => skill.trim());
             }
             
-            // Gestion des réseaux sociaux
             if (updates.socialMedia) {
                 try {
                     updates.socialMedia = JSON.parse(updates.socialMedia);
@@ -73,7 +71,6 @@ exports.updateUser = async (req, res) => {
                 }
             }
         } else {
-            // Supprimer les champs spécifiques aux agents si le rôle change
             updates.bio = undefined;
             updates.skills = undefined;
             updates.socialMedia = undefined;

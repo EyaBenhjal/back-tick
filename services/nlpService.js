@@ -61,5 +61,36 @@ class NLPService {
     }
   }
 }
+const findBestResponse = async (message, solutions) => {
+  // Tokenization et stemming du message
+  const messageTokens = natural.PorterStemmerFr.tokenizeAndStem(message.toLowerCase());
+  
+  let bestSolution = null;
+  let maxScore = 0;
+  let matchedKeywords = [];
 
-module.exports = NLPService;
+  for (const solution of solutions) {
+    const solutionKeywords = solution.keywords.map(k => 
+      natural.PorterStemmerFr.stem(k.toLowerCase())
+    );
+    
+    const intersection = messageTokens.filter(token => 
+      solutionKeywords.includes(token)
+    );
+    
+    if (intersection.length > maxScore) {
+      maxScore = intersection.length;
+      bestSolution = solution;
+      matchedKeywords = [...new Set(intersection)]; // Éviter les doublons
+    }
+  }
+
+  return {
+    reply: bestSolution?.content || "Je n'ai pas trouvé de solution spécifique à votre problème.",
+    matchedKeywords
+  };
+};
+module.exports = {
+  NLPService,
+  findBestResponse
+};
