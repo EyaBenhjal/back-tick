@@ -53,6 +53,12 @@ const addCategory = async (req, res) => {
   try {
     const { cat_name, description, department } = req.body;
     const newCat = new Category({ cat_name, description, department });
+
+    const existing = await Category.findOne({ cat_name });
+if (existing) {
+  return res.status(400).json({ success: false, error: "Cette catégorie existe déjà." });
+}
+
     await newCat.save();
     return res.status(200).json({ success: true, category: newCat });
   } catch (error) {

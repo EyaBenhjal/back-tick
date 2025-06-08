@@ -3,6 +3,7 @@ const User = require("../models/User");
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const bcrypt = require("bcrypt");
+const path = require('path');
 
 const crypto = require("crypto");
 const { createAccessToken } = require("../utils/token");
@@ -65,7 +66,6 @@ exports.signup = async (req, res) => {
           verificationToken 
       });
 
-      // Envoi de l'email de vérification
       await sendVerificationEmail(email, verificationToken);
       
       // Réponse réussie
@@ -189,20 +189,43 @@ exports.createUserByAdmin = async (req, res) => {
       });
 
       await transporter.sendMail({
-        from: `"Votre Plateforme" <${process.env.EMAIL_USER}>`,
+        from: `"FlowTickets" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: 'Bienvenue sur notre plateforme',
-        html: `
-          <h1>Bienvenue, ${name} !</h1>
-          <p>Un administrateur a créé un compte pour vous sur notre plateforme.</p>
-          <p>Voici vos informations de connexion :</p>
-          <ul>
-            <li>Email: ${email}</li>
-            <li>Mot de passe temporaire: ${password}</li>
-          </ul>
-          <p>Nous vous recommandons de changer votre mot de passe après votre première connexion.</p>
-          <a href="http://localhost:3000/login">Se connecter</a>
-        `
+       html: `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+    <div style="text-align: center; margin-bottom: 30px;">
+      <img src="cid:logo" alt="FlowTickets" style="max-width: 150px;" />
+    </div>
+
+    <h2 style="color: #333;">Bienvenue, ${name} !</h2>
+    <p>Un administrateur a créé un compte pour vous sur notre plateforme.</p>
+    
+    <p><strong>Informations de connexion :</strong></p>
+    <ul>
+      <li><strong>Email :</strong> ${email}</li>
+      <li><strong>Mot de passe temporaire :</strong> ${password}</li>
+    </ul>
+
+    <p>Nous vous recommandons de <strong>changer votre mot de passe</strong> après votre première connexion.</p>
+    
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="http://http://localhost:5173" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px;">
+        Se connecter
+      </a>
+    </div>
+
+    <p style="margin-top: 30px;">Cordialement,<br>L'équipe FlowTickets</p>
+  </div>
+`,
+attachments: [
+  {
+    filename: 'logo.png',
+    path: path.join(__dirname, '../public/uploads/logo.png'), 
+    cid: 'logo' 
+  }
+]
+
       });
     } catch (emailError) {
       console.error("Erreur lors de l'envoi de l'email:", emailError);
@@ -211,7 +234,7 @@ exports.createUserByAdmin = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      msg: "Utilisateur créé avec succès et email envoyé",
+      msg: "User created successfully and email sent.",
       user: {
         id: newUser._id,
         name: newUser.name,

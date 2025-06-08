@@ -201,6 +201,7 @@ ticketSchema.statics.createFromChatbot = async function(chatData) {
       timestamp: new Date()
     }]
   });
+  
 };
 
 ticketSchema.methods.addChatResponse = function(response) {

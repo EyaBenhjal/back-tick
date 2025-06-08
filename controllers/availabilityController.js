@@ -4,9 +4,16 @@ const User = require("../models/User");
 
 exports.createOrUpdateAvailability = async (req, res) => {
     try {
-        const { slots } = req.body;
+ const { slots = [], status, currentTickets, maxTickets } = req.body; // slots rendu optionnel
         const userId = req.user.id;
 
+        // Validation des créneaux seulement si slots est fourni
+        if (slots && !Array.isArray(slots)) {
+            return res.status(400).json({
+                success: false,
+                error: "Les disponibilités doivent être un tableau"
+            });
+        }
         // Validation des créneaux
         if (!Array.isArray(slots)) {
             return res.status(400).json({
@@ -43,25 +50,27 @@ exports.createOrUpdateAvailability = async (req, res) => {
         }
 
         let disponibility;
-        if (user.availability) {
-            // Mise à jour des créneaux existants
-            disponibility = await Disponibility.findByIdAndUpdate(
-                user.availability,
-                { slots },
-                { new: true }
-            );
-        } else {
-            // Création de nouveaux créneaux
-            disponibility = new Disponibility({
-                user: userId,
-                slots
-            });
-            await disponibility.save();
-            
-            // Lier à l'utilisateur
-            user.availability = disponibility._id;
-            await user.save();
-        }
+   if (user.availability) {
+    // Mise à jour
+    disponibility = await Disponibility.findByIdAndUpdate(
+        user.availability,
+        { slots, status, currentTickets, maxTickets },
+        { new: true }
+    );
+} else {
+    // Création
+    disponibility = new Disponibility({
+        user: userId,
+        slots,
+        status,
+        currentTickets,
+        maxTickets
+    });
+    await disponibility.save();
+    user.availability = disponibility._id;
+    await user.save();
+}
+
 
         res.json({
             success: true,
@@ -70,6 +79,51 @@ exports.createOrUpdateAvailability = async (req, res) => {
 
     } catch (err) {
         console.error("Erreur createOrUpdateAvailability:", err);
+        res.status(500).json({ 
+            success: false, 
+            error: "Erreur serveur" 
+        });
+    }
+};
+exports.updateStatusAndWorkload = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { status, currentTickets, maxTickets } = req.body;
+
+        // Validation minimale
+        if (!status || !maxTickets) {
+            return res.status(400).json({
+                success: false,
+                error: "Statut et capacité maximale sont requis"
+            });
+        }
+
+        const user = await User.findById(userId);
+        if (!user || !user.availability) {
+            return res.status(404).json({ 
+                success: false, 
+                error: "Disponibilité non trouvée" 
+            });
+        }
+
+        // Mise à jour sans toucher aux slots existants
+        const updated = await Disponibility.findByIdAndUpdate(
+            user.availability,
+            { 
+                status,
+                currentTickets: currentTickets || 0, // Valeur par défaut
+                maxTickets 
+            },
+            { new: true }
+        );
+
+        res.json({ 
+            success: true, 
+            disponibility: updated 
+        });
+
+    } catch (err) {
+        console.error("Erreur updateStatusAndWorkload:", err);
         res.status(500).json({ 
             success: false, 
             error: "Erreur serveur" 

@@ -6,7 +6,8 @@ const {
     createOrUpdateAvailability,
     getUserAvailability,
     addAvailabilitySlot,
-    removeAvailabilitySlot
+    removeAvailabilitySlot,
+    updateStatusAndWorkload
 } = require("../controllers/availabilityController");
 
 router.put("/:slotId", verifyAccessToken, createOrUpdateAvailability);
@@ -16,5 +17,6 @@ router.get("/listdis", verifyAccessToken, getUserAvailability);
 router.post("/slots", verifyAccessToken, addAvailabilitySlot);
 
 router.delete("/slots/:slotId", verifyAccessToken, removeAvailabilitySlot);
+router.put("/status-workload", verifyAccessToken, updateStatusAndWorkload);
 
 module.exports = router;

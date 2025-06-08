@@ -4,82 +4,84 @@ const mongoose = require("mongoose");
 const Ticket = require("../models/Ticket");
 const nodemailer = require("nodemailer");
 const User = require("../models/User");
-const { createTicketNotification,createCommentNotification} = require('./notificationController');
-const { sendNotification } = require('../websocket');
+const { createTicketNotification,createCommentNotification,createGenericNotification} = require('./notificationController');
+const { sendNotification } = require('../utils/websocket');
 const path = require('path');
 const fs = require('fs');
+
 const Notification = require('../models/Notification');
-const { createAndSendNotification } = require('../utils/notificationService');
+const notificationController = require("./notificationController");
 
 const { validateObjectId } = require("../utils/validation");
 exports.createTicket = async (req, res) => {
   try {
-    // Validation des champs obligatoires
     const requiredFields = ['title', 'description', 'department', 'category', 'clientName', 'clientEmail'];
     for (const field of requiredFields) {
       if (!req.body[field]) {
         return res.status(400).json({
           success: false,
-          error: `Le champ ${field} est obligatoire`
+          error: `Le champ ${field} est obligatoire.`
         });
       }
     }
 
-    // Validation des IDs
-    if (!mongoose.Types.ObjectId.isValid(req.body.department)) {
-      return res.status(400).json({ error: "ID de département invalide" });
+    const { title, description, department, category, priority, clientName, clientEmail, requestType, dueDate } = req.body;
+
+    // Vérification des IDs
+    if (!mongoose.Types.ObjectId.isValid(department)) {
+      return res.status(400).json({ success: false, error: "ID de département invalide." });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(req.body.category)) {
-      return res.status(400).json({ error: "ID de catégorie invalide" });
+    if (!mongoose.Types.ObjectId.isValid(category)) {
+      return res.status(400).json({ success: false, error: "ID de catégorie invalide." });
     }
 
-    // Vérification des existences
+    // Vérifier existence de la catégorie et du département
     const [categoryExists, departmentExists] = await Promise.all([
-      Category.findById(req.body.category),
-      Department.findById(req.body.department)
+      Category.findById(category),
+      Department.findById(department)
     ]);
 
     if (!categoryExists) {
-      return res.status(400).json({ error: "Catégorie inexistante" });
+      return res.status(400).json({ success: false, error: "Catégorie inexistante." });
     }
 
     if (!departmentExists) {
-      return res.status(400).json({ error: "Département inexistant" });
+      return res.status(400).json({ success: false, error: "Département inexistant." });
     }
 
-    // Trouver un agent disponible dans ce département
+    // Rechercher un agent disponible
     const availableAgent = await User.findOne({
-      department: req.body.department,
+      department,
       role: 'Agent',
-      isAvailable: true
-    }).sort({ ticketCount: 1 }); // Prendre l'agent avec le moins de tickets
+    }).sort({ ticketCount: 1 });
+    console.log("Agent disponible trouvé :", availableAgent);
 
     // Construction des données du ticket
     const ticketData = {
-      title: req.body.title,
-      description: req.body.description,
-      department: req.body.department,
-      priority: req.body.priority || "medium",
+      title,
+      description,
+      department,
+      priority: priority || "medium",
       status: "new",
       requester: req.user?.id || null,
       createdBy: req.user?.id || null,
       createdByRole: req.user?.role || "Client",
       clientDetails: {
-        name: req.body.clientName,
-        email: req.body.clientEmail
+        name: clientName,
+        email: clientEmail
       },
       metadata: {
-        requestType: req.body.requestType || "Incident",
-        category: req.body.category,
+        requestType: requestType || "Incident",
+        category,
         timeSpent: 0,
-        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null
+        dueDate: dueDate ? new Date(dueDate) : null
       },
-      assignedAgent: availableAgent?._id || null, // Assignation automatique si agent disponible
+      assignedAgent: availableAgent ? new mongoose.Types.ObjectId(availableAgent._id) : null,
       files: []
     };
 
-    // Gestion des fichiers
+    // Traitement des fichiers joints
     if (req.files?.length > 0) {
       ticketData.files = req.files.map(file => ({
         path: `/tickets/${file.filename}`,
@@ -88,35 +90,22 @@ exports.createTicket = async (req, res) => {
         uploadedAt: new Date()
       }));
     }
-// Création du ticket
-const ticket = await Ticket.create(ticketData);
 
-const actionUser = req.user?.id || null;
-const message = `Ticket créé par ${req.user?.role || 'Client'}`;
-const wss = req.app.get('wss'); // supposons que tu aies attaché `wss` à l'app Express
+    // Création du ticket
+    const ticket = await Ticket.create(ticketData);
 
-await createTicketNotification(ticket, actionUser, message, wss);
-    // Mise à jour du compteur de tickets de l'agent si assigné
-    if (availableAgent) {
-      await User.findByIdAndUpdate(availableAgent._id, {
-        $inc: { ticketCount: 1 }
-      });
-    }
-
-    // Peuplement pour la réponse
+    // Peuplement du ticket AVANT de l’utiliser
     const populatedTicket = await Ticket.findById(ticket._id)
       .populate('department', 'dep_name')
       .populate('assignedAgent', 'name email')
       .populate('metadata.category', 'cat_name');
+console.log("👉 ticket envoyé à la notification :", ticket);
 
-    // Notification si agent assigné
+    // Notification à l'agent 
     if (availableAgent) {
-      await createAndSendNotification({
-        recipient: availableAgent._id,
-        title: 'Nouveau Ticket Assigné',
-        message: `Vous avez été assigné au ticket: ${ticket.title}`,
-        ticket: ticket._id
-      });
+    await createTicketNotification(availableAgent._id.toString(), populatedTicket);
+
+
 
       // Envoi d'email
       const transporter = nodemailer.createTransport({
@@ -135,28 +124,48 @@ await createTicketNotification(ticket, actionUser, message, wss);
           <div>
             <h2>Bonjour ${availableAgent.name},</h2>
             <p>Un nouveau ticket vous a été assigné :</p>
-            <p><strong>Titre:</strong> ${ticket.title}</p>
-            <p><strong>Priorité:</strong> ${ticket.priority}</p>
+            <ul>
+              <li><strong>Titre :</strong> ${ticket.title}</li>
+              <li><strong>Priorité :</strong> ${ticket.priority}</li>
+            </ul>
           </div>
         `
       });
+
+      // Mise à jour du compteur de tickets de l'agent
+      await User.findByIdAndUpdate(availableAgent._id, { $inc: { ticketCount: 1 } });
     }
 
-    res.status(201).json({
+    // Notification générale (création ticket) — mise à jour : suppression de wss et usage d'objet
+    const actionUserId = req.user?.id || null;
+    const actionUserRole = req.user?.role || 'Client';
+
+    if (actionUserId) {
+  await createGenericNotification({
+    recipientId: actionUserId,
+    title: 'Ticket créé',
+    message: `Ticket créé par ${actionUserRole}`,
+    ticketId: populatedTicket._id.toString()
+  });
+}
+
+
+    return res.status(201).json({
       success: true,
-      data: populatedTicket,
-      message: "Ticket créé avec succès" + (availableAgent ? " et assigné à un agent" : "")
+      message: "Ticket créé avec succès" + (availableAgent ? " et assigné à un agent." : "."),
+      data: populatedTicket
     });
 
   } catch (error) {
-    console.error("Erreur création ticket:", error);
-    res.status(500).json({
+    console.error("Erreur lors de la création du ticket :", error);
+    return res.status(500).json({
       success: false,
-      error: "Erreur lors de la création du ticket",
+      error: "Erreur interne lors de la création du ticket.",
       details: error.message
     });
   }
 };
+
 
 exports.downloadFile = async (req, res) => {
   try {
@@ -384,7 +393,48 @@ const mailOptions = {
   subject: `Votre ticket #${updatedTicket._id} a été résolu`,
   html: `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+  <!-- Logo centré -->
+  <div style="text-align: center; margin-bottom: 30px;">
+    <img src="cid:logo" alt="Logo" style="max-width: 150px;" />
+  </div>
+
+  <!-- Message principal -->
+  <h2 style="color: #333;">Bonjour ${clientName},</h2>
+  <p style="font-size: 15px; color: #555;">
+    Nous vous informons que votre ticket a été <strong>marqué comme résolu</strong>.
+  </p>
+
+  <!-- Détails du ticket -->
+  <table style="width: 100%; font-size: 14px; color: #444; border-collapse: collapse;">
+    <tr>
+      <td style="padding: 5px 0;"><strong>Ticket ID :</strong></td>
+      <td style="padding: 5px 0;">${updatedTicket._id}</td>
+    </tr>
+    <tr>
+      <td style="padding: 5px 0;"><strong>Titre :</strong></td>
+      <td style="padding: 5px 0;">${updatedTicket.title}</td>
+    </tr>
+    <tr>
+      <td style="padding: 5px 0;"><strong>Statut :</strong></td>
+      <td style="padding: 5px 0;">Résolu</td>
+    </tr>
+    ${updatedTicket.resolutionNotes ? `
+    <tr>
+      <td style="padding: 5px 0; vertical-align: top;"><strong>Notes de résolution :</strong></td>
+      <td style="padding: 5px 0;">${updatedTicket.resolutionNotes}</td>
+    </tr>` : ''}
+  </table>
+
+  <!-- Footer -->
+  <p style="font-size: 14px; color: #555; margin-top: 30px;">
+    Si vous avez d'autres questions, n'hésitez pas à nous contacter.
+  </p>
+
+  <p style="margin-top: 20px; font-size: 14px; color: #333;">
+    Cordialement,<br/>
+  </p>
+</div>
       <h2 style="color: #333;">Bonjour ${clientName},</h2>
       <p>Nous vous informons que votre ticket a été marqué comme résolu :</p>
       <ul style="list-style-type: none; padding: 0;">
@@ -472,156 +522,82 @@ exports.getAgentsByDepartment = async (req, res) => {
   }
 };
 
-//  Assigner un agent à un ticket
 exports.assignAgent = async (req, res) => {
   try {
     const { ticketId } = req.params;
     const { agentId } = req.body;
 
-    if (!validateObjectId(ticketId) || !validateObjectId(agentId)) {
+    if (!mongoose.Types.ObjectId.isValid(ticketId) || !mongoose.Types.ObjectId.isValid(agentId)) {
       return res.status(400).json({ success: false, error: "ID invalide." });
     }
 
-    const ticket = await Ticket.findByIdAndUpdate(
-      ticketId,
-      { assignedAgent: agentId, status: "in_progress" },
-      { new: true }
-    )
-      .populate("assignedAgent", "name email")
-      .populate("requester", "name");
-
-    if (!ticket) {
-      return res.status(404).json({ success: false, error: "Ticket non trouvé." });
-    }
-exports.assignAgent = async (req, res) => {
-  try {
-    const { ticketId } = req.params;
-    const { agentId } = req.body;
-
-    if (!validateObjectId(ticketId) || !validateObjectId(agentId)) {
-      return res.status(400).json({ success: false, error: "ID invalide." });
-    }
-
-    // Récupérer le ticket
     const ticket = await Ticket.findById(ticketId).populate("requester", "name");
     if (!ticket) {
       return res.status(404).json({ success: false, error: "Ticket non trouvé." });
     }
 
-    // Vérifier que l'agent existe et qu'il est valide
     const agent = await User.findById(agentId);
     if (!agent || agent.role !== "Agent") {
       return res.status(400).json({ success: false, error: "L'utilisateur assigné n'est pas un agent valide." });
     }
 
-    // Vérifier que l'agent appartient au même département
     if (agent.department.toString() !== ticket.department.toString()) {
       return res.status(400).json({ success: false, error: "L'agent n'appartient pas au même département que le ticket." });
     }
 
-    // Mettre à jour le ticket
     ticket.assignedAgent = agentId;
     ticket.status = "in_progress";
     await ticket.save();
 
     await ticket.populate("assignedAgent", "name email");
 
-    // Envoyer un email à l'agent
-    if (ticket.assignedAgent?.email) {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS
+    // Email de notification
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: ticket.assignedAgent.email,
+      subject: "Nouveau ticket assigné",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
+          <h2>Bonjour ${ticket.assignedAgent.name},</h2>
+          <p>Un nouveau ticket vous a été assigné :</p>
+          <ul style="list-style-type: none; padding: 0;">
+            <li><strong>Ticket ID:</strong> ${ticket._id}</li>
+            <li><strong>Titre:</strong> ${ticket.title}</li>
+            <li><strong>Demandeur:</strong> ${ticket.requester.name}</li>
+            <li><strong>Priorité:</strong> ${ticket.priority}</li>
+          </ul>
+          <p>Merci de traiter ce ticket dans les meilleurs délais.</p>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: 'logo.png',
+          path: path.join(__dirname, '../public/uploads/logo.png'),
+          cid: 'logo'
         }
-      });
+      ]
+    };
 
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: ticket.assignedAgent.email,
-        subject: "Nouveau ticket assigné",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
-            <h2>Bonjour ${ticket.assignedAgent.name},</h2>
-            <p>Un nouveau ticket vous a été assigné :</p>
-            <ul style="list-style-type: none; padding: 0;">
-              <li><strong>Ticket ID:</strong> ${ticket._id}</li>
-              <li><strong>Titre:</strong> ${ticket.title}</li>
-              <li><strong>Demandeur:</strong> ${ticket.requester.name}</li>
-              <li><strong>Priorité:</strong> ${ticket.priority}</li>
-            </ul>
-            <p>Merci de traiter ce ticket dans les meilleurs délais.</p>
-          </div>
-        `,
-        attachments: [
-          {
-            filename: 'logo.png',
-            path: path.join(__dirname, '../public/uploads/logo.png'),
-            cid: 'logo'
-          }
-        ]
-      };
+    await transporter.sendMail(mailOptions);
+    console.log(`Email de notification envoyé à l'agent: ${ticket.assignedAgent.email}`);
 
-      await transporter.sendMail(mailOptions);
-      console.log(`Email de notification envoyé à l'agent: ${ticket.assignedAgent.email}`);
-    }
-
-    res.json({ success: true, data: ticket });
+    return res.json({ success: true, data: ticket });
 
   } catch (error) {
     console.error("Erreur lors de l'assignation du ticket:", error);
-    res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
 
-    // Envoyer un email à l'agent avec logo
-    if (ticket.assignedAgent && ticket.assignedAgent.email) {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS
-        }
-      });
-
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: ticket.assignedAgent.email,
-        subject: "Nouveau ticket assigné",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <img src="cid:logo" alt="Logo" style="width: 150px; display: block; margin: 0 auto 20px;" />
-            <h2>Bonjour ${ticket.assignedAgent.name},</h2>
-            <p>Un nouveau ticket vous a été assigné :</p>
-            <ul style="list-style-type: none; padding: 0;">
-              <li><strong>Ticket ID:</strong> ${ticket._id}</li>
-              <li><strong>Titre:</strong> ${ticket.title}</li>
-              <li><strong>Demandeur:</strong> ${ticket.requester.name}</li>
-              <li><strong>Priorité:</strong> ${ticket.priority}</li>
-            </ul>
-            <p>Merci de traiter ce ticket dans les meilleurs délais.</p>
-          </div>
-        `,
-        attachments: [
-          {
-            filename: 'logo.png',
-            path: path.join(__dirname, '../public/uploads/logo.png'),
-            cid: 'logo'
-          }
-        ]
-      };
-
-      await transporter.sendMail(mailOptions);
-      console.log(`Email de notification envoyé à l'agent: ${ticket.assignedAgent.email}`);
-    }
-
-    res.json({ success: true, data: ticket });
-  } catch (error) {
-    console.error("Erreur lors de l'assignation du ticket:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
 
 exports.addComment = async (req, res) => {
   try {

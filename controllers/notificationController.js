@@ -1,92 +1,59 @@
 const Notification = require('../models/Notification');
+const { sendNotification } = require('../utils/emitter.js');
 
 const User = require('../models/User');
 const { validateObjectId } = require('../utils/validation');
-const { sendNotification } = require('../websocket');
-
-module.exports.createTicketNotification = async (ticket, actionUser, message,wss) => {
+const emitter = require("../utils/emitter");
+exports.createTicketNotification = async (assignedAgentId, ticketInfo) => {
   try {
-    let clientNotification, agentNotification;
+    const notification = {
+      title: "Nouveau ticket assigné",
+      message: `Un ticket vient de vous être assigné: ${ticketInfo?.title || 'Ticket'}`,
+      userId: assignedAgentId,
+      ticketId: ticketInfo?._id,
+    };
 
-    clientNotification = await Notification.create({
-      userId: ticket.requester,
-      ticketId: ticket._id,
-      title: `Ticket ${ticket.ticketNumber} mis à jour`,
-      message: message,
-      type: 'status_change',
-      isRead: false
+    await Notification.create(notification);
+
+    emitter.sendNotificationToUser(assignedAgentId.toString(), {
+      ...notification,
+      date: new Date()
     });
 
-    // Envoyer la notification via WebSocket
-    sendNotification(wss, ticket.requester, {
-      _id: clientNotification._id,
-      title: clientNotification.title,
-      message: clientNotification.message,
-      isRead: false,
-      createdAt: new Date()
-    });
+    console.log("Notification enregistrée et envoyée via WebSocket");
 
-    // Notification pour l'agent si assigné
-    if (ticket.assignedAgent) {
-      agentNotification = await Notification.create({
-        userId: ticket.assignedAgent,
-        ticketId: ticket._id,
-        title: `Ticket ${ticket.ticketNumber} assigné`,
-        message: `Vous avez été assigné au ticket par ${actionUser.name}`,
-        type: 'assignment',
-        isRead: false
-      });
-
-      sendNotification(wss, ticket.assignedAgent, {
-        _id: agentNotification._id,
-        title: agentNotification.title,
-        message: agentNotification.message,
-        isRead: false,
-        createdAt: new Date()
-      });
-    }
-
-    return { clientNotification, agentNotification };
   } catch (error) {
-    console.error("Erreur création notification:", error);
-    throw error;
+    console.error("Erreur lors de la création de la notification de ticket:", error);
   }
 };
-const createNotification = async (req, res) => {
+
+
+exports.createGenericNotification = async ({ recipientId, title, message, ticketId }) => {
   try {
-    const { userId, ticketId, title, message, type } = req.body;
-    const notification = new Notification({
-      userId,
-      ticketId,
+    const notification = {
       title,
       message,
-      type,
-    });
-    await notification.save();
+      ticketId,
+      date: new Date(),
+    };
 
-    // WebSocket temps réel
-    if (req.wss) {
-      const { sendNotification } = require('../websocket');
-      sendNotification(req.wss, userId, notification);
-    }
+    emitter.sendNotificationToUser(recipientId.toString(), notification);
+    console.log("✅ Notification envoyée au créateur du ticket via WebSocket");
 
-    res.status(201).json(notification);
   } catch (error) {
-    console.error('Erreur lors de la création de la notification:', error);
-    res.status(500).json({ message: 'Erreur serveur' });
+    console.error("❌ Erreur lors de la notification générique :", error);
   }
 };
 
-exports.createCommentNotification = async (ticket, commentAuthor, commentText, wss) => {
+
+exports.createCommentNotification = async (ticket, commentAuthor, commentText) => {
   try {
     const usersToNotify = new Set();
 
-    // Notifier le client s'il n'est pas l'auteur du commentaire
     if (ticket.requester?.toString() !== commentAuthor._id.toString()) {
       usersToNotify.add(ticket.requester.toString());
     }
 
-    // Notifier l'agent assigné s'il n'est pas l'auteur du commentaire
     if (ticket.assignedAgent &&
         ticket.assignedAgent.toString() !== commentAuthor._id.toString()) {
       usersToNotify.add(ticket.assignedAgent.toString());
@@ -106,8 +73,7 @@ exports.createCommentNotification = async (ticket, commentAuthor, commentText, w
 
       notifications.push(notification);
 
-      // Envoi via WebSocket
-      sendNotification(wss, userId, {
+      sendNotification(userId, {
         _id: notification._id,
         title: notification.title,
         message: notification.message,
@@ -127,53 +93,7 @@ exports.createCommentNotification = async (ticket, commentAuthor, commentText, w
 
 
 
-const getUserNotifications = async (req, res) => {
-  const userId = req.user.id;
-  if (!mongoose.Types.ObjectId.isValid(userId)) {
-    return res.status(400).json({ success: false, error: "ID de ticket invalide" });
-  }
-  try {
-    const notifications = await Notification.find({ userId: req.user._id })
-      .sort({ createdAt: -1 });
 
-    res.status(200).json({ success: true, data: notifications });
-  } catch (error) {
-    console.error("Erreur récupération notifications :", error);
-    res.status(500).json({ success: false, error: "Erreur serveur" });
-  }
-  console.log(req.user.id)
-};
-
-exports.markAsRead = async (req, res) => {
-  try {
-    const notification = await Notification.findOne({
-      _id: req.params.id,
-      userId: req.user.id
-    });
-
-    if (!notification) {
-      return res.status(404).json({
-        success: false,
-        error: 'Notification non trouvée ou non autorisée'
-      });
-    }
-
-    notification.isRead = true;
-    await notification.save();
-
-    res.status(200).json({
-      success: true,
-      notification
-    });
-  } catch (error) {
-    console.error("Erreur marquage comme lu:", error);
-    res.status(500).json({
-      success: false,
-      error: 'Erreur serveur',
-      systemMessage: error.message
-    });
-  }
-};
 
 // notificationController.js
 exports.getAdminNotifications = async (req, res) => {
@@ -188,7 +108,7 @@ exports.getAdminNotifications = async (req, res) => {
   
   res.json({ success: true, notifications });
 };
-// Version pour les requêtes API directes
+
 exports.createNotification = async (req, res) => {
   try {
     const { userId, ticketId, title, message, type } = req.body;
