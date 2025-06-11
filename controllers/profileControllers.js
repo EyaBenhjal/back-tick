@@ -108,3 +108,39 @@ exports.removeSkill = async (req, res) => {
     res.status(500).json({ success: false, error: "Erreur serveur" });
   }
 };
+
+exports.addSkill = async (req, res) => {
+  try {
+    const { skill } = req.body;
+    const userId = req.user.id;
+
+    if (!skill || skill.trim() === "") {
+      return res.status(400).json({ success: false, error: "Compétence invalide" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: "Utilisateur non trouvé" });
+    }
+
+    if (user.skills.includes(skill)) {
+      return res.status(400).json({ success: false, error: "Compétence déjà ajoutée" });
+    }
+
+    if (user.skills.length >= 10) {
+      return res.status(400).json({ success: false, error: "Maximum de 10 compétences atteint" });
+    }
+
+    user.skills.push(skill);
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Compétence ajoutée avec succès",
+      skills: user.skills
+    });
+  } catch (err) {
+    console.error("Erreur addSkill:", err);
+    res.status(500).json({ success: false, error: "Erreur serveur" });
+  }
+};

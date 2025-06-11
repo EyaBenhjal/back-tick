@@ -33,17 +33,23 @@ exports.createGenericNotification = async ({ recipientId, title, message, ticket
     const notification = {
       title,
       message,
+      userId: recipientId,
       ticketId,
       date: new Date(),
     };
 
+    // Enregistrer en base
+    await Notification.create(notification);
+
+    // Envoyer via WebSocket
     emitter.sendNotificationToUser(recipientId.toString(), notification);
-    console.log("✅ Notification envoyée au créateur du ticket via WebSocket");
+    console.log("✅ Notification générique enregistrée et envoyée");
 
   } catch (error) {
     console.error("❌ Erreur lors de la notification générique :", error);
   }
 };
+
 
 
 exports.createCommentNotification = async (ticket, commentAuthor, commentText) => {

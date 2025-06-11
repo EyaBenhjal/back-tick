@@ -50,7 +50,6 @@ exports.createTicket = async (req, res) => {
       return res.status(400).json({ success: false, error: "Département inexistant." });
     }
 
-    // Rechercher un agent disponible
     const availableAgent = await User.findOne({
       department,
       role: 'Agent',
@@ -116,38 +115,51 @@ console.log("👉 ticket envoyé à la notification :", ticket);
         }
       });
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: availableAgent.email,
-        subject: `Nouveau Ticket Assigné (#${ticket._id})`,
-        html: `
-          <div>
-            <h2>Bonjour ${availableAgent.name},</h2>
-            <p>Un nouveau ticket vous a été assigné :</p>
-            <ul>
-              <li><strong>Titre :</strong> ${ticket.title}</li>
-              <li><strong>Priorité :</strong> ${ticket.priority}</li>
-            </ul>
-          </div>
-        `
-      });
+  await transporter.sendMail({
+  from: `"FlowTickets" <${process.env.EMAIL_USER}>`,
+  to: availableAgent.email,
+  subject: `🎫 Nouveau Ticket Assigné (#${ticket._id})`,
+  html: `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+    <div style="text-align: center; margin-bottom: 30px;">
+      <img src="cid:logo" alt="FlowTickets" style="max-width: 150px;" />
+    </div>
+
+    <h2 style="color: #333;">Bonjour ${availableAgent.name},</h2>
+    <p>Un nouveau ticket vient de vous être assigné :</p>
+    
+    <ul style="list-style: none; padding-left: 0;">
+      <li><strong>🎫 Titre :</strong> ${ticket.title}</li>
+      <li><strong>🏷️ Priorité :</strong> ${ticket.priority}</li>
+      <li><strong>🏢 Département :</strong> ${populatedTicket.department?.dep_name}</li>
+      <li><strong>📂 Catégorie :</strong> ${populatedTicket.metadata?.category?.cat_name}</li>
+    </ul>
+
+    <p style="margin-top: 20px;">Merci de traiter ce ticket dans les plus brefs délais.</p>
+
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="http://localhost:5173/" style="padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px;">
+        Voir le Ticket
+      </a>
+    </div>
+
+    <p style="margin-top: 30px;">Cordialement,<br>L’équipe FlowTickets</p>
+  </div>
+  `,
+  attachments: [
+    {
+      filename: 'logo.png',
+      path: path.join(__dirname, '../public/uploads/logo.png'), // ✅ Mets à jour le chemin si nécessaire
+      cid: 'logo' // cid doit correspondre à src="cid:logo"
+    }
+  ]
+});
 
       // Mise à jour du compteur de tickets de l'agent
       await User.findByIdAndUpdate(availableAgent._id, { $inc: { ticketCount: 1 } });
     }
 
-    // Notification générale (création ticket) — mise à jour : suppression de wss et usage d'objet
-    const actionUserId = req.user?.id || null;
-    const actionUserRole = req.user?.role || 'Client';
-
-    if (actionUserId) {
-  await createGenericNotification({
-    recipientId: actionUserId,
-    title: 'Ticket créé',
-    message: `Ticket créé par ${actionUserRole}`,
-    ticketId: populatedTicket._id.toString()
-  });
-}
+   
 
 
     return res.status(201).json({
@@ -319,7 +331,6 @@ exports.updateTicket = async (req, res) => {
       return res.status(404).json({ success: false, error: "Ticket non trouvé" });
     }
 
-    // Autorisation: Admin OU Agent assigné OU Créateur
     const isAdmin = req.user.role === "Admin";
     const isAssignedAgent = existingTicket.assignedAgent?.toString() === req.user.id;
     const isRequester = existingTicket.requester.toString() === req.user.id;
@@ -337,27 +348,17 @@ exports.updateTicket = async (req, res) => {
       priority: req.body.priority || existingTicket.priority,
       status: req.body.status || existingTicket.status,
       department: req.body.department || existingTicket.department,
+      resolutionNotes: req.body.resolutionNotes || existingTicket.resolutionNotes,
       metadata: {
         timeSpent: req.body.timeSpent || existingTicket.metadata?.timeSpent,
         requestType: req.body.requestType || existingTicket.metadata?.requestType,
         category: req.body.category || existingTicket.metadata?.category,
-        dueDate: req.body.dueDate || existingTicket.metadata?.dueDate
-      },
-      resolutionNotes: req.body.resolutionNotes || existingTicket.resolutionNotes,
+        dueDate: req.body.dueDate ? new Date(req.body.dueDate) : existingTicket.metadata?.dueDate
+      }
     };
 
-    // Ajout du commentaire si envoyé
-    if (req.body.comment) {
-      updates.comment = req.body.comment;
-    }
-    if (req.body.dueDate) {
-      updates.metadata.dueDate = new Date(req.body.dueDate);
-    }
-    if (req.body.assignedAgent && isAdmin) {
-      updates.assignedAgent = req.body.assignedAgent;
-    }
-
-    // Gérer les fichiers si besoin
+    if (req.body.comment) updates.comment = req.body.comment;
+    if (req.body.assignedAgent && isAdmin) updates.assignedAgent = req.body.assignedAgent;
     if (req.file) {
       updates.attachments = [{
         path: req.file.path,
@@ -365,18 +366,18 @@ exports.updateTicket = async (req, res) => {
       }];
     }
 
-    // Update the ticket first
     const updatedTicket = await Ticket.findByIdAndUpdate(
       ticketId,
       { $set: updates },
       { new: true, runValidators: true }
-    )
-    .populate('department requester assignedAgent');
-if (req.body.status === 'resolved' && existingTicket.status !== 'resolved') {
+    ).populate("department requester assignedAgent");
+
+    // Envoi d'un email si le ticket vient d'être résolu
+    if (req.body.status === "resolved" && existingTicket.status !== "resolved") {
       try {
-        // Récupérer les détails du client
         const clientEmail = updatedTicket.clientDetails?.email || updatedTicket.requester?.email;
         const clientName = updatedTicket.clientDetails?.name || updatedTicket.requester?.name;
+        const clientId = updatedTicket.requester?._id;
 
         if (clientEmail) {
           const transporter = nodemailer.createTransport({
@@ -387,93 +388,58 @@ if (req.body.status === 'resolved' && existingTicket.status !== 'resolved') {
             }
           });
 
-const mailOptions = {
-  from: process.env.EMAIL_USER,
-  to: clientEmail,
-  subject: `Votre ticket #${updatedTicket._id} a été résolu`,
-  html: `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-  <!-- Logo centré -->
-  <div style="text-align: center; margin-bottom: 30px;">
-    <img src="cid:logo" alt="Logo" style="max-width: 150px;" />
-  </div>
+          await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: clientEmail,
+            subject: `Votre ticket #${updatedTicket._id} a été résolu`,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                  <img src="cid:logo" style="max-width: 150px;" />
+                </div>
+                <h2>Bonjour ${clientName || "Client"},</h2>
+                <p>Votre ticket a été <strong>marqué comme résolu</strong>.</p>
+                <ul>
+                  <li><strong>ID :</strong> ${updatedTicket._id}</li>
+                  <li><strong>Titre :</strong> ${updatedTicket.title}</li>
+                  ${updatedTicket.resolutionNotes ? `<li><strong>Notes :</strong> ${updatedTicket.resolutionNotes}</li>` : ""}
+                </ul>
+                <p>Merci de nous avoir contactés.</p>
+                <p style="margin-top: 20px;">Cordialement,<br/>L'équipe support</p>
+              </div>
+            `,
+            attachments: [{
+              filename: "logo.png",
+              path: path.join(__dirname, "../public/uploads/logo.png"),
+              cid: "logo"
+            }]
+          });
 
-  <!-- Message principal -->
-  <h2 style="color: #333;">Bonjour ${clientName},</h2>
-  <p style="font-size: 15px; color: #555;">
-    Nous vous informons que votre ticket a été <strong>marqué comme résolu</strong>.
-  </p>
-
-  <!-- Détails du ticket -->
-  <table style="width: 100%; font-size: 14px; color: #444; border-collapse: collapse;">
-    <tr>
-      <td style="padding: 5px 0;"><strong>Ticket ID :</strong></td>
-      <td style="padding: 5px 0;">${updatedTicket._id}</td>
-    </tr>
-    <tr>
-      <td style="padding: 5px 0;"><strong>Titre :</strong></td>
-      <td style="padding: 5px 0;">${updatedTicket.title}</td>
-    </tr>
-    <tr>
-      <td style="padding: 5px 0;"><strong>Statut :</strong></td>
-      <td style="padding: 5px 0;">Résolu</td>
-    </tr>
-    ${updatedTicket.resolutionNotes ? `
-    <tr>
-      <td style="padding: 5px 0; vertical-align: top;"><strong>Notes de résolution :</strong></td>
-      <td style="padding: 5px 0;">${updatedTicket.resolutionNotes}</td>
-    </tr>` : ''}
-  </table>
-
-  <!-- Footer -->
-  <p style="font-size: 14px; color: #555; margin-top: 30px;">
-    Si vous avez d'autres questions, n'hésitez pas à nous contacter.
-  </p>
-
-  <p style="margin-top: 20px; font-size: 14px; color: #333;">
-    Cordialement,<br/>
-  </p>
-</div>
-      <h2 style="color: #333;">Bonjour ${clientName},</h2>
-      <p>Nous vous informons que votre ticket a été marqué comme résolu :</p>
-      <ul style="list-style-type: none; padding: 0;">
-        <li><strong>Ticket ID:</strong> ${updatedTicket._id}</li>
-        <li><strong>Titre:</strong> ${updatedTicket.title}</li>
-        <li><strong>Statut:</strong> Résolu</li>
-        ${updatedTicket.resolutionNotes ? `<li><strong>Notes de résolution:</strong> ${updatedTicket.resolutionNotes}</li>` : ''}
-      </ul>
-      <p>Si vous avez d'autres questions, n'hésitez pas à nous contacter.</p>
-      <p style="margin-top: 30px;">Cordialement,<br>L'équipe de support</p>
-    </div>
-  `,
-  attachments: [
-    {
-      filename: 'logo.png',
-      path: path.join(__dirname, '../public/uploads/logo.png'), // Chemin absolu correct
-      cid: 'logo' // Correspond au cid utilisé dans <img src="cid:logo" />
-    }
-  ]
-};
-
-          await transporter.sendMail(mailOptions);
-          console.log(`Email de notification envoyé au client: ${clientEmail}`);
+          // Envoi notification DB + WebSocket
+          if (clientId) {
+            await createGenericNotification({
+              recipientId: clientId.toString(),
+              title: "Ticket résolu",
+              message: `Votre ticket "${updatedTicket.title}" a été marqué comme résolu.`,
+              ticketId: updatedTicket._id.toString()
+            });
+          }
         }
       } catch (emailError) {
-        console.error("Erreur lors de l'envoi de l'email au client:", emailError);
-        // Ne pas bloquer la réponse même si l'email échoue
+        console.error("Erreur email de résolution :", emailError);
       }
     }
-    // Then handle notifications if status changed
+
+    // Si le statut a changé : créer notification DB + envoyer en temps réel
     if (req.body.status && req.body.status !== existingTicket.status) {
       try {
         const notification = await createTicketNotification(
-          updatedTicket, 
-          req.user, 
+          updatedTicket,
+          req.user,
           `Statut changé à ${updatedTicket.status}`
         );
-        
-        // Envoyer la notification en temps réel
+
+        // WebSocket : client
         if (notification.clientNotification) {
           sendNotification(wss, updatedTicket.requester, {
             _id: notification.clientNotification._id,
@@ -483,7 +449,8 @@ const mailOptions = {
             createdAt: new Date()
           });
         }
-        
+
+        // WebSocket : agent
         if (notification.agentNotification && updatedTicket.assignedAgent) {
           sendNotification(wss, updatedTicket.assignedAgent, {
             _id: notification.agentNotification._id,
@@ -493,15 +460,15 @@ const mailOptions = {
             createdAt: new Date()
           });
         }
-      } catch (notificationError) {
-        console.error("Erreur lors de la création de la notification:", notificationError);
+      } catch (notifError) {
+        console.error("Erreur notification de changement de statut :", notifError);
       }
     }
 
-    res.status(200).json({ success: true, data: updatedTicket });
+    return res.status(200).json({ success: true, data: updatedTicket });
   } catch (error) {
-    console.error("Erreur mise à jour ticket:", error);
-    res.status(500).json({ success: false, error: "Erreur serveur" });
+    console.error("Erreur lors de la mise à jour du ticket :", error);
+    return res.status(500).json({ success: false, error: "Erreur serveur" });
   }
 };
 
