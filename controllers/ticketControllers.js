@@ -8,7 +8,6 @@ const { createTicketNotification,createCommentNotification,createGenericNotifica
 const { sendNotification } = require('../utils/websocket');
 const path = require('path');
 const fs = require('fs');
-
 const Notification = require('../models/Notification');
 const notificationController = require("./notificationController");
 
@@ -25,7 +24,7 @@ exports.createTicket = async (req, res) => {
       }
     }
 
-    const { title, description, department, category, priority, clientName, clientEmail, requestType, dueDate } = req.body;
+const { title, description, department, category, priority, clientName, clientEmail, requestType, dueDate, assignedAgent } = req.body;
 
     // Vérification des IDs
     if (!mongoose.Types.ObjectId.isValid(department)) {
@@ -50,10 +49,31 @@ exports.createTicket = async (req, res) => {
       return res.status(400).json({ success: false, error: "Département inexistant." });
     }
 
-    const availableAgent = await User.findOne({
-      department,
-      role: 'Agent',
-    }).sort({ ticketCount: 1 });
+   let availableAgent = null;
+
+if (assignedAgent && assignedAgent.trim() !== '') {
+  // L'admin a choisi un agent, on vérifie la validité
+  if (!mongoose.Types.ObjectId.isValid(assignedAgent)) {
+    return res.status(400).json({
+      success: false,
+      error: "ID d'agent assigné invalide."
+    });
+  }
+  availableAgent = await User.findById(assignedAgent);
+  if (!availableAgent || availableAgent.role !== 'Agent') {
+    return res.status(400).json({
+      success: false,
+      error: "L'agent assigné est invalide ou n'est pas un agent."
+    });
+  }
+} else {
+  // Pas d'agent choisi, on assigne automatiquement un agent dispo dans le département
+  availableAgent = await User.findOne({
+    department,
+    role: 'Agent',
+  }).sort({ ticketCount: 1 });
+}
+
     console.log("Agent disponible trouvé :", availableAgent);
 
     // Construction des données du ticket
@@ -177,7 +197,6 @@ console.log("👉 ticket envoyé à la notification :", ticket);
     });
   }
 };
-
 
 exports.downloadFile = async (req, res) => {
   try {

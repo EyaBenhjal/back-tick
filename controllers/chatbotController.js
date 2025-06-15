@@ -1,79 +1,47 @@
 const Category = require('../models/Category');
 const Solution = require('../models/Solution');
-const natural = require('natural');
-const tokenizer = new natural.WordTokenizer();
 const NLPService = require('../services/nlpService');
+const { askLLM } = require('../services/llmService');
+const { getLLMResponse } = require('../services/llmService');
 
-const predefinedData = require('../data/predefinedData');
-const handleAutoChatbot = async (req, res) => {
+
+const getChatbotResponse = async (req, res) => {
+  const { message, category, provider = "openai" } = req.body;
+
   try {
-    const { message } = req.body;
-
-    if (!message) {
-      return res.status(400).json({
-        reply: "Le champ 'message' est requis",
-        error: true
-      });
-    }
-
-    // Détection automatique de la catégorie
-    const categories = await Category.find();
-    const words = message.toLowerCase().split(/\W+/);
-    
-    let bestCategory = null;
-    let maxMatches = 0;
-
-    for (const cat of categories) {
-      const keywords = cat.keywords.map(k => k.toLowerCase());
-      const matches = words.filter(word => keywords.includes(word)).length;
-      
-      if (matches > maxMatches) {
-        bestCategory = cat;
-        maxMatches = matches;
-      }
-    }
-
-    if (!bestCategory) {
-      return res.json({
-        reply: "Je n'ai pas pu identifier votre problème. Pouvez-vous fournir plus de détails ?",
-        error: false,
-        category: null
-      });
-    }
-
-    // Recherche des solutions
-    const solutions = await Solution.find({ category: bestCategory._id });
-    const { reply, matchedKeywords } = await NLPService.findBestResponse(message, solutions);
-
-    res.json({
-      reply,
-      category: bestCategory.cat_name,
-      matchedKeywords,
-      error: false
+    const response = await askLLM(message, category, provider);
+    res.json({ 
+      success: true,
+      response,
+      provider_used: provider
     });
-
   } catch (error) {
-    console.error('Erreur chatbot:', error);
+    console.error("Erreur LLM:", error);
     res.status(500).json({ 
-      reply: "Désolé, une erreur technique est survenue",
-      error: true 
+      success: false,
+      error: error.message,
+      fallback_response: "Désolé, notre système rencontre des difficultés. Veuillez réessayer plus tard."
     });
   }
 };
 
-
-
+async function getBestFallback(categoryId) {
+  return await Solution.findOne(
+    { category: categoryId, isFallback: true },
+    {},
+    { sort: { fallbackPriority: -1 } }
+  );
+}
+// 📌 2. DETECT CATEGORY (utilisé seul)
 const detectCategory = async (req, res) => {
   const { text } = req.body;
-  if (!text) return res.status(400).json({ success: false, message: "Le texte est requis" });
+  if (!text) {
+    return res.status(400).json({ success: false, message: "Le texte est requis" });
+  }
 
-  // On récupère toutes les catégories
   const categories = await Category.find();
-
-  // Transforme texte en mots simples, en minuscules
   const words = text.toLowerCase().split(/\W+/);
 
-  // Recherche la catégorie qui a le plus de mots clés correspondants
   let bestCat = null;
   let maxMatches = 0;
 
@@ -98,10 +66,68 @@ const detectCategory = async (req, res) => {
   });
 };
 
-module.exports = { detectCategory };
+// 📌 3. AUTO CHATBOT (catégorie détectée automatiquement)
+const handleAutoChatbot = async (req, res) => {
+  try {
+    const { message } = req.body;
 
+    if (!message) {
+      return res.status(400).json({
+        reply: "Le champ 'message' est requis",
+        error: true
+      });
+    }
 
+    const categories = await Category.find();
+    const words = message.toLowerCase().split(/\W+/);
 
+    let bestCategory = null;
+    let maxMatches = 0;
+
+    for (const cat of categories) {
+      const keywords = cat.keywords.map(k => k.toLowerCase());
+      const matches = words.filter(word => keywords.includes(word)).length;
+
+      if (matches > maxMatches) {
+        bestCategory = cat;
+        maxMatches = matches;
+      }
+    }
+
+    if (!bestCategory) {
+      return res.json({
+        reply: "Je n'ai pas pu identifier votre problème. Pouvez-vous fournir plus de détails ?",
+        error: false,
+        category: null
+      });
+    }
+
+    const solutions = await Solution.find({ category: bestCategory._id });
+    const { reply, matchedKeywords } = await NLPService.findBestResponse(message, solutions);
+
+    let finalReply = reply;
+
+    if (!reply || reply.includes("Je n'ai pas") || matchedKeywords.length === 0) {
+      finalReply = await getLLMResponse(message, bestCategory.cat_name, reply);
+    }
+
+    res.json({
+      reply: finalReply,
+      category: bestCategory.cat_name,
+      matchedKeywords,
+      error: false
+    });
+
+  } catch (error) {
+    console.error('Erreur chatbot:', error);
+    res.status(500).json({
+      reply: "Désolé, une erreur technique est survenue",
+      error: true
+    });
+  }
+};
+
+// 📌 4. CATEGORY-SPECIFIC CHATBOT
 const handleCategoryChatbot = async (req, res) => {
   try {
     const { category, message } = req.body;
@@ -113,7 +139,7 @@ const handleCategoryChatbot = async (req, res) => {
       });
     }
 
-    const { reply, matchedKeywords, category: detectedCategory } = 
+    const { reply, matchedKeywords, category: detectedCategory } =
       await NLPService.getResponseByCategory(category, message);
 
     res.json({
@@ -125,11 +151,16 @@ const handleCategoryChatbot = async (req, res) => {
 
   } catch (error) {
     console.error('Erreur chatbot:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       reply: "Désolé, une erreur technique est survenue",
-      error: true 
+      error: true
     });
   }
 };
 
-module.exports = { detectCategory, handleCategoryChatbot,handleAutoChatbot };
+module.exports = {
+  getChatbotResponse,
+  detectCategory,
+  handleAutoChatbot,
+  handleCategoryChatbot
+};
