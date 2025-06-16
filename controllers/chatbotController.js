@@ -1,23 +1,45 @@
 const Category = require('../models/Category');
 const Solution = require('../models/Solution');
 const NLPService = require('../services/nlpService');
-const { askLLM } = require('../services/llmService');
-const { getLLMResponse } = require('../services/llmService');
+const { askLLM } = require('../services/llmsergroq');
+
+const ChatMessage = require('../models/chatMessage');
 
 
 const getChatbotResponse = async (req, res) => {
-  const { message, category, provider = "openai" } = req.body;
+  const { message, category, provider = "openai", userId, ticketId } = req.body;
 
   try {
+    // 1. Stocker la question utilisateur
+    const userMessage = new ChatMessage({
+      from: 'user',
+      content: message,
+      userId,
+      ticketId,
+    });
+    await userMessage.save();
+
+    // 2. Obtenir la réponse du LLM
     const response = await askLLM(message, category, provider);
-    res.json({ 
+
+    // 3. Stocker la réponse du bot
+    const botMessage = new ChatMessage({
+      from: 'bot',
+      content: response,
+      userId,
+      ticketId,
+    });
+    await botMessage.save();
+
+    // 4. Répondre à la requête HTTP
+    res.json({
       success: true,
       response,
       provider_used: provider
     });
   } catch (error) {
     console.error("Erreur LLM:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: error.message,
       fallback_response: "Désolé, notre système rencontre des difficultés. Veuillez réessayer plus tard."
@@ -127,7 +149,6 @@ const handleAutoChatbot = async (req, res) => {
   }
 };
 
-// 📌 4. CATEGORY-SPECIFIC CHATBOT
 const handleCategoryChatbot = async (req, res) => {
   try {
     const { category, message } = req.body;
