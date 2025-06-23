@@ -47,7 +47,7 @@ comments: [{
   },
   status: {
     type: String,
-    enum: ["new", "in_progress", "resolved", "closed"], // Ajout de "closed"
+    enum: ["new", "in_progress", "resolved", "closed"], 
     default: "new"
   },
   requester: {

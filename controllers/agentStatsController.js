@@ -6,7 +6,17 @@ module.exports = {
     try {
       // Récupérer l'ID de l'agent connecté depuis le token
       const agentId = req.user._id;
-      
+       const tickets = await Ticket.find({ 
+    assignedAgent: agentId,
+    status: { $in: ['new', 'in_progress', 'resolved'] }
+  });
+
+  const counts = {
+    new: tickets.filter(t => t.status === 'new').length,
+    inProgress: tickets.filter(t => t.status === 'in_progress').length,
+    resolved: tickets.filter(t => t.status === 'resolved').length
+  };
+
       // Vérifier que l'utilisateur est bien un agent
       const agent = await User.findById(agentId);
       if (!agent || agent.role !== 'Agent') {
@@ -22,14 +32,8 @@ module.exports = {
         overdueTickets
       ] = await Promise.all([
         Ticket.countDocuments({ assignedAgent: agentId }),
-        Ticket.countDocuments({ 
-          assignedAgent: agentId,
-          status: { $regex: /resolved/i } 
-        }),
-        Ticket.countDocuments({ 
-          assignedAgent: agentId,
-          status: 'in_progress'
-        }),
+  Ticket.countDocuments({ assignedAgent: agentId, status: 'resolved' }), // → resolvedTickets
+  Ticket.countDocuments({ assignedAgent: agentId, status: 'in_progress' }), 
         Ticket.countDocuments({ 
           assignedAgent: agentId,
           status: 'new'
@@ -37,7 +41,7 @@ module.exports = {
         Ticket.countDocuments({
           assignedAgent: agentId,
           'metadata.dueDate': { $lt: new Date() },
-          status: { $nin: ['resolved', 'closed'] }
+          status: { $nin: ['resolved', 'closed','new'] }
         })
       ]);
 
@@ -214,8 +218,8 @@ module.exports = {
         },
         stats: {
           totalAssigned,
-          resolved: resolvedTickets,
-          inProgress: inProgressTickets,
+        resolved: counts.resolved,
+      inProgress: counts.inProgress,
           new: newTickets,
           overdue: overdueTickets,
           resolutionRate: totalAssigned > 0 
